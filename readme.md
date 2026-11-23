@@ -1,0 +1,505 @@
+# Hermit
+
+## 概要
+Hermit は、生成AIによりテキスト・画像・音声を生成する作業を一元管理・自動化し支援する、ローカル環境で動作可能な CLI のフロントエンドである。
+
+* 想定するバックエンド
+	* テキスト生成
+		* lostruins/koboldcpp (https://github.com/lostruins/koboldcpp)
+		* oobabooga/text-generation-webui (https://github.com/oobabooga/text-generation-webui)
+	* 画像生成
+		* AUTOMATIC1111/stable-diffusion-webui (https://github.com/AUTOMATIC1111/stable-diffusion-webui)
+	* 音声生成
+		* litagin02/Style-Bert-VITS2 (https://github.com/litagin02/Style-Bert-VITS2)
+
+複数の生成 AI のバックエンドが提供する GUI を手動で操作する手間から解放し、生成する対象に依存しない統一的なインターフェースを提供し、創作活動を支援する。
+
+## 機能
+* EBNF パーサおよび再帰下降構文解析により実装された、独自のマクロ機能および評価エンジンから構成されるテンプレート言語により、プロンプト生成時に動的な処理を実行できる。
+* ネットワーク通信(HTTP/HTTPS(POST/GET)、WebSocket)、JSON 解析、プロセス制御、文字列構文解析、Base64エンコード・デコード、URLエンコード、リクエスト構築、レスポンス解析など、多岐にわたる付随的な処理を代替し、開発者が本質的な創作活動に注力できるようにする。
+* プロンプトによりプロンプトを作成し再帰的に実行するような、高度に抽象化された生成ツールチェーンの構築を容易にする。
+* 生成されたテキストからMarkdownのコードブロックを抽出して任意の複数のファイルに分割して管理し、プロンプトの構成要素として再利用する。(コードブロックによるファイル分割、 `file` マクロ)
+* 小説の執筆のように、過去に生成されたテキストが蓄積し肥大化する作業において、有限で貧弱なコンテキストに収まるようプロンプトを構成する。(`head`, `tail`, `head_tail` マクロ)
+* 思考過程や対話の話者切り替え、段落ごとの段階的生成など、テキストを生成する工程を自然言語による記述で構造化する。(`phase` マクロ)
+* ユーザーによりカスタマイズされた処理による実行時例外を含む例外発生時に、自動でスタックトレースやソースコード位置情報など、デバッグに有益な情報を重要度に応じてフィルタリング可能な形態でログ出力する、堅牢なエラーハンドリング機構を提供する。
+* LLM のトークナイザーが通信により返したトークン数の情報をローカルに LRU キャッシュし、O(1) で高速に再利用する。
+* 主に Windows 環境のように UTF-8 をターミナルの標準のコードページとして採用していない OS 環境に対して、文字コードを UTF-8 に統一して扱う。
+* VRAM 容量の制限に起因して同時に複数のサーバーを起動することができないローカル環境にて、統一的な方法で各サーバーを起動・通信待機・終了する。
+
+## ビルド要求
+* Boost 1.88.0+
+* Google Test
+* C++20+
+* Visual Studio の C++ ビルド環境と vcpkg の MSBuild 連携
+
+Visual Studio Installer の構成インポートには、リポジトリ直下の `.vsconfig` を使用してください。Native Desktop C++ ワークロードと MSVC x86/x64 ツール（MSPDB を含む）、Windows 11 SDK 10.0.26100、vcpkg、Google Test 用コンポーネントを含みます。
+
+実装は機能単位の複数の `.cpp` に分割されている。`Hermit/Hermit.hpp` は公開型・関数宣言とテンプレート実装を提供し、各実装ファイルは名前空間・機能単位でコンパイルされる。
+
+通常の検証は差分ビルドを優先する。任意の PowerShell から、インストール済み Visual Studio 18 を `vswhere.exe` で解決し、同じコンソールセッション内で開発環境を初期化して実行する。
+
+```powershell
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$install = & $vswhere -products * -property installationPath | Where-Object { $_ -match '\\18\\' } | Select-Object -First 1
+$devcmd = Join-Path $install 'Common7\Tools\VsDevCmd.bat'
+cmd.exe /d /c "call \"$devcmd\" -arch=x64 -host_arch=x64 && where msbuild && msbuild .\Hermit.sln /m /t:Build /p:VisualStudioVersion=18.0 /p:Configuration=Release /p:Platform=x64 /v:minimal"
+& .\test\x64\Release\test.exe
+```
+
+`/t:Rebuild` はツールチェーン・生成先の変更、依存関係破損、クリーン状態の再現が必要な場合だけ使用する。
+
+ファイル構成、公開 API、ヘッダー依存関係は [docs/SPECIFICATION.md](docs/SPECIFICATION.md) に集約しています。README では利用者が必要とする実行方法と公開仕様だけを説明します。
+
+`vcpkg.json` に Boost と Google Test を宣言し、`Hermit.vcxproj`、`HermitLib.vcxproj`、`test.vcxproj` で vcpkg manifest mode を有効にしている。各プロジェクトは vcpkg の `vcpkg.props` / `vcpkg.targets` を MSBuild へ条件付きでインポートするため、vcpkg が利用可能で連携設定が済んでいれば、ソリューションのビルド時に依存ライブラリが自動復元され、ヘッダー・ライブラリのパスも設定される。通常は個別に `vcpkg install` を実行する必要はない。
+
+初めて利用する環境では vcpkg を用意し、MSBuild 連携を一度有効にする。vcpkg のコマンドが PATH にある場合は次を実行する。
+
+```powershell
+vcpkg integrate install
+```
+
+初回ビルド時は依存パッケージのダウンロードとビルドのため、ネットワーク接続が必要となる。依存関係はリポジトリ直下の `vcpkg.json` と `vcpkg-configuration.json` で管理される。
+
+## CLI リファレンス
+
+### 共通設定
+下記の設定は、対象とするバックエンドに依存せず共通して参照される。
+
+| オプション | 概要 | デフォルト値 | 備考 |
+| --- | --- | --- | --- |
+| --mode | モード | tg | `(tg\|kc\|sd\|sb\|cu\|extract-png-parameters\|create-process\|terminate-process)` のいずれか |
+| --base-path | 各種パスの基準となるパス | . |  |
+| --log-level | ログレベル | info | `(trace\|debug\|info\|warning\|error\|fatal)` のいずれか |
+| --log-file | ログファイル | log |  |
+| --config-file, -c | コマンドラインオプションを指定した設定ファイル | config.ini |  |
+| --verbose, -v | ログ出力をコンソールに冗長に出力する | false |  |
+| --number-iterations, -N | 処理を反復する回数 | 1 | `-1` を指定すると実行を停止するまで無限に処理を反復する。 |
+| --define, -D | マクロ | "" | 詳細は後述 |
+| --phases | phase | "" | 詳細は後述 |
+
+`config-file` で指定した設定ファイルは、INI 形式を想定した構文解析により読み込まれる。コマンドラインと設定ファイルの双方が共通するコマンドラインオプションを指定している場合、コマンドラインで指定された方を優先する。頻繁に指定するコマンドラインオプションは設定ファイルで指定することが検討できる。
+
+```ini:config.ini
+# ポート番号の設定
+llm-port = 5001
+
+# 真偽値オプションの設定例
+verbose = true
+
+# Gemma 4 向けの設定例
+llm-generation-prefix = <|channel>thought\n
+kc-stop-sequence = <turn|>
+kc-temperature = 1.0
+kc-top-k = 64
+kc-top-p = 0.95
+kc-max-context-length = 8192
+kc-max-length = 4096
+llm-reasoning-prefix = <|channel>thought\n
+llm-reasoning-suffix = <channel|>
+```
+
+モード名は下記の通り、それぞれと対応するバックエンドの略称である。
+
+* tg: Text-Generation-webui
+* kc: KoboldCpp
+* sd: Stable-Diffusion-webui
+* sb: Style-Bert-VITS2
+
+パスの区切り文字は `/` でなければならない。ファイル名の拡張子は省略することができる。テキストファイルのパスが期待される文脈でパスに拡張子が含まれない場合、 `.txt` を補完する。相対パスは `--base-path` オプションで指定したパスを基準として解釈される。
+
+## バックエンド別の使用法
+
+### oobabooga/text-generation-webui
+oobabooga/text-generation-webui(https://github.com/oobabooga/text-generation-webui) を導入し、下記の準備をする。
+1. `text-generation-webui/user_data/CMD_FLAGS.txt` にて ` --api` オプションを指定する。
+2. `start_windows.bat` など実行環境と対応するスクリプトを実行し、サーバーを起動する。
+
+`--mode tg` と `--llm-` および `--tg-` から始まるオプションを適宜指定して Hermit を実行する。
+使用するモデルはバックエンドが対応している形式であれば何でも構わないが、例として [Gemma 4](https://ai.google.dev/gemma/docs/core?hl=ja) などが挙げられる。
+
+主要ファイル
+
+| オプション | 概要 | デフォルト値 |
+| --- | --- | --- |
+| --llm-prompt-file | プロンプトファイル | prompt |
+| --llm-output-file | 出力ファイル | output |
+
+必要に応じて下記のオプションで通信先を指定する。oobabooga をデフォルトの設定で運用している場合、明示的に指定する必要はない。
+プロンプトとは、例えば以下のようなテキストである。
+
+```
+<|turn>system
+あなたは小説家です。内容の続きを500文字程度だけ執筆してください。
+
+# 登場人物
+## (中略)
+
+# 直近の内容
+{{tail(file("output"), 1024)}}
+<turn|>
+<|turn>user
+<turn|>
+<|turn>model
+```
+
+既存のファイルの内容ではなく特定の文字列をプロンプトして使用する場合、 `--*-prompt-file` オプションではなく `--*-prompt` オプションを使用する。
+`--*-prompt` オプションが指定されている場合、`--*-prompt-file` で指定されたファイルの内容は無視される。
+
+| オプション | 概要 | デフォルト値 |
+| --- | --- | --- |
+| --llm-host | ホスト | localhost |
+| --llm-port | ポート | 5000 |
+
+実行を開始すると、 Hermit は下記のように LLM に渡すプロンプトを作成する。
+
+1. `prompt.txt` の内容をプロンプトに追加する。
+2. `--llm-generation-prefix` オプションで指定された文字列をプロンプトに追加する。(デフォルトは空文字)
+
+プロンプトを作成した後、LLM と通信し、テキストを生成する。生成されたテキストの先頭には `--llm-generation-prefix` オプションで指定された文字列が含まれる。
+デフォルトでは、生成したテキストは `output.txt` の末尾に追加される。
+変更する場合は `--llm-output-file` で出力先を指定する。親フォルダが存在しない場合、自動的に作成される。
+
+LLMに小説を生成させる場合、`output.txt` は作成された小説になる。
+LLMとチャットをする場合、`output.txt` は会話の履歴になる。
+
+### lostruins/koboldcpp
+lostruins/koboldcpp(https://github.com/lostruins/koboldcpp) を導入し、下記の準備をする。
+1. ` --port 5000` オプションなどを指定して `koboldcpp.exe` を起動する。
+
+`--mode kc` と `--llm-` および `--kc-` から始まるオプションを適宜指定して Hermit を実行する。
+
+```bat:run.bat
+rem 起動用バッチの例
+@echo off
+cd /d %~dp0
+set model=models/gemma-4-E4B-it-Q8_0.gguf
+
+koboldcpp.exe --model %model% ^
+  --gpulayers 99 ^
+  --contextsize 8192 ^
+  --usecuda ^
+  --jinja ^
+  --port 5000
+```
+
+画像分析を利用する場合、KoboldCpp の起動オプションで下記のように CLIP / Vision 投影モデルを指定する必要がある。
+```
+--mmproj mmproj-f16.gguf
+```
+
+下記のようなコマンドで Hermit を実行すると、画像分析の結果が出力される。
+```
+Hermit --mode kc --llm-mode chat_completions --llm-image-file 
+```
+
+`--llm-mode chat_completions` を指定する場合、プロンプトにはチャットテンプレートのタグ(`<|turn>`, `<|think|>`, `<turn|>` 等)を含めてはならない。
+同オプションが指定された場合、OpenAI 互換 API `/v1/chat/completions` を利用することになるが、同 API は対話テンプレートの構築をサーバー側に任せることを想定している。
+
+```prompt.txt
+入力された画像に何が含まれるか詳細に分析し説明せよ。
+```
+
+### AUTOMATIC1111/stable-diffusion-webui
+AUTOMATIC1111/stable-diffusion-webui (https://github.com/AUTOMATIC1111/stable-diffusion-webui) を導入し、下記の準備をする。
+
+1. `webui-user.bat` など実行環境と対応するスクリプトを編集し、`COMMANDLINE_ARGS` に `--api` を追加する。他のサーバーに割り当てるポートを考慮して適宜 `--port 7861` 等を追加する。
+2. `webui-user.bat` など実行環境と対応するスクリプトを実行し、サーバーを起動する。
+
+`--mode sd` と `--sd-` から始まるオプションを適宜指定する。
+下記のようなコマンドで画像を生成する。
+
+`Hermit --mode sd --sd-port 7861 --sd-width 832 --sd-height 1216 --sd-steps 30 --sd-prompt "sky"`
+
+### litagin02/Style-Bert-VITS2
+litagin02/Style-Bert-VITS2 (https://github.com/litagin02/Style-Bert-VITS2) を導入し、下記の準備をする。
+
+1. `config.yml` を編集し、他のサーバーに割り当てるポートを考慮して適宜 `port: 5001` のように変更する。
+2. `Server.bat` を実行し、サーバーを起動する。
+
+`--mode sb` と `--sb-` から始まるオプションを適宜指定する。
+下記のようなコマンドで音声を生成する。
+
+`Hermit --mode sb --sb-port 5001 --sb-model-name "amitaro" --sb-speaker-id 0 --sb-language JP --sb-text "こんにちは"`
+
+#### 共通オプション
+## 実行制御
+
+### 反復
+`-N` オプションにより処理を反復する回数を指定することができる。デフォルトの値は `1` である。`-1` を指定すると実行を停止するまで無限に処理を反復する。
+
+<!-- マクロ仕様は技術仕様書へ移管済み。README には掲載しない。 -->
+### 実行例
+囲まれたマクロを以下の文脈で使用することができる。
+
+* 各種テキストファイルの内容
+* コマンドラインオプションで指定するファイルパス
+
+マクロは特定の文字列を `{{` と `}}` で囲むことにより記述する。
+マクロはプロンプト中の任意の箇所に、任意の数だけ挿入することができる。
+マクロには、 `{{foo(arg1, arg2, arg3, ...)}}` 形式のマクロ関数と、 `{{foo}}` 形式のマクロ変数がある。
+マクロは式指向であり、反復や条件分岐等の構文は持たない。
+マクロ関数の引数として文字列定数を指定する場合 `"arg"` というように `"` で囲む。
+マクロは実行時に `--number-iterations` で指定された回数の反復毎に、マクロを評価した結果の文字列に展開される。
+マクロを評価した結果を文字列に展開せず、無視したい場合、`{{a = 42;}}` というように末尾に `;` を付ける。
+`;` はそれ以前の式を棄却する構文であり、式全体が最後に `;` で棄却された場合、それは空文字列に展開される。
+この仕様は、代入演算とほとんど同様の単純な構文でマクロ変数を宣言することを可能にし、かつそれを評価した結果が文字列として展開されることを回避することを目的として設計されている。
+
+ただし、`--log-file` で指定されたログファイルのパスは、プログラムの開始時に一度だけマクロを展開され、以降その時点のパスを使用し続ける。
+これはプログラムがログファイルのストリームを開いたまま保持し効率的にログ出力するための制限である。
+
+マクロ変数は `--define` オプションにより実行前に定義することができる。
+`--define "user={{user}}" "char={{char}}"` というようにマクロの展開先にマクロを指定することができる。
+ただし上記のようにマクロの展開後の文字列が展開前の文字列と完全に一致した場合、再帰的なマクロの展開は中断される。
+このような冗長なマクロの定義は、マクロを含むプロンプトを LLM を使用して生成する際に、マクロの展開を抑止するために役立つ。
+
+マクロ変数はその値として C 言語の `bool`, `int`, `char`, `double`, `string` のいずれかひとつを保持することができる。
+マクロ変数は動的に型付けされ、 `=` 演算子によってのみ型を変更することができる。
+それ以前に宣言されていないマクロ変数に対する `=` による代入は、マクロ変数の宣言および初期化として解釈される。
+宣言されたマクロ変数は同ファイル、および同ファイルから `generated` マクロで呼び出されたサブプロンプト内でのみ有効である。
+文字定数は `'c'` 形式、文字列定数は `"str"` 形式で表現する。エスケープ文字は C 言語のそれと同様である。
+
+#### マクロ利用例
+
+| 種別 | 記法 | 機能・戻り値 |
+| --- | --- | --- |
+| 変数 | `N` | 現在の反復番号（1 始まり）。 |
+| 変数 | `phase` | 現在の phase 名。 |
+| 変数 | `prev_phase` | 直前の phase 名。先頭では未定義。 |
+| 変数 | `next_phase` | 次の phase 名。末尾では未定義。 |
+| 変数 | `stdin` | 非対話入力時の標準入力。対話端末では空文字列。 |
+| 変数 | `date` / `time` / `datetime` | 実行時のローカル日時を `yyyyMMdd`、`HHmmss`、`yyyyMMddHHmmss` で返す。 |
+| 変数 | `exit_code` | `exec` の直近の終了コード。 |
+| 型変換 | `int(value)` / `double(value)` / `char(value)` / `string(value)` | 引数を指定型へ変換して返す。変換不能時はマクロエラー。 |
+| ファイル | `file(path)` | テキストファイルの内容。相対パスは `--base-path` 基準。 |
+| 文字列切り詰め | `head(str, tokens)` / `tail(str, tokens)` | 先頭または末尾を指定トークン数に切り詰める。 |
+| 文字列切り詰め | `head_tail(str, head_tokens, tail_tokens)` | 先頭・末尾を残し、中間を `...` に置換する。 |
+| JSON | `json_literal(str)` | JSON 文字列リテラル用にエスケープする。 |
+| 環境変数 | `getenv(key)` / `setenv(key, value)` | 環境変数の取得／設定。`setenv` の戻り値は空文字列。 |
+| 生成 | `generated(prompt)` | 現在の設定でサブプロンプトを LLM に送り、生成結果を返す。 |
+| 乱数 | `random(min, max)` | 指定範囲の整数を返す。引数は 0～2 個で、省略時は 0～`UINT32_MAX`。 |
+| 選択 | `choice(value...)` | 引数からランダムに 1 つ選んで返す。 |
+| プロセス | `exec(executable, args...)` | 子プロセスの標準出力を返し、終了コードを `exit_code` に設定する。 |
+| コードブロック | `code_block(markdown, name)` | Markdown の指定名コードブロックを返す。未検出時は空文字列。 |
+| 要約 | `summary(prompt, target, max_tokens)` | LLM で要約し、結果を指定トークン数以下に切り詰める。 |
+| パス | `root(path)` / `parent(path)` / `stem(path)` / `extension(path)` | パスの各構成要素を返す。 |
+
+#### マクロ利用例
+#### `file(path)`
+指定されたテキストファイルの内容に展開される。
+これによりプロンプトを複数のファイルに分割して管理することができる。
+
+```
+{{file("output")}}
+{{file("output.txt")}}
+{{file("parent_dir/output.txt")}}
+```
+
+#### `head(str, max_token)`
+指定された文字列のうち、先頭から指定されたトークン数分の文字列に展開される。
+例えば最古の出力をプロンプトに含めることができる。
+
+```
+{{head(file("output"), 1024)}}
+```
+
+#### `tail(str, max_token)`
+指定された文字列のうち、末尾から指定されたトークン数分の文字列に展開される。
+例えば最新の出力をプロンプトに含めることができる。
+
+```
+{{tail(file("output"), 1024)}}
+```
+
+#### `head_tail(str, head_max_token, tail_max_token)`
+指定されたテキストファイルの内容のうち、先頭と末尾それぞれから指定されたトークン数分の文字列に展開される。
+先頭と末尾の間は `...` で表現される。
+例えば最古と最新の出力をプロンプトに含めることができる。
+```
+{{head_tail(file("output"), 512, 512)}}
+```
+
+#### `json_literal(str)`
+生改行を `\n` に置換するなど、JSON の文字列リテラルとして正しくなるようエスケープする。
+
+```
+{ "key": "{{json_literal(file("filename"))}}" }
+```
+
+#### `getenv(key)`
+環境変数 `key` の値に展開される。
+```
+{{getenv("PATH")}}
+```
+
+#### `setenv(key, value)`
+環境変数 `key` の値を `value` に設定し、空文字に展開される。
+
+#### `date` / `time` / `datetime`
+`date` は `yyyyMMdd`、`time` は `HHmmss`、`datetime` は `yyyyMMddHHmmss` 形式で実行時のローカル時刻に展開される。主に生成したテキストを生成単位で出力する目的で使用する。
+
+#### `N`
+1から開始する現在の反復回数に展開される。主に生成したテキストを反復単位で出力する目的で使用する。
+
+#### `stdin`
+標準入力から渡された文字列に展開される。
+
+#### `generated(subprompt)`
+サブプロンプトを実行した結果に展開される。
+
+#### `exec(exe, args ...)`
+子プロセスとして実行ファイルを実行した結果に展開される。終了コードはマクロ変数 `{{exit_code}}` に設定される。
+
+```
+{{exec("cmd", "/c", "dir")}}
+exit_code={{exit_code}}
+```
+
+#### `summary(prompt, target, max_tokens)`
+文字列を最大トークン数以下に要約する。
+
+```
+{{summary(file("summary"), file("long_file"), 1024)}}
+```
+
+`summary.txt` とは下記のようなファイルである。
+
+```
+<|turn>system
+<|think|>
+Summarize the following text in {{max_tokens}} tokens or fewer. Output only the summary with no introductory text, markdown formatting, or additional commentary.
+<turn|>
+<|turn>user
+{{target}}
+<turn|>
+<|turn>model
+```
+
+`{{target}}`, `{{max_tokens}}` は `prompt` の実行中のみ設定される。展開語の文字列のトークン数は `max_tokens` に切り詰められる。
+
+
+#### `random(min, max)`
+ランダムな整数値の10進数表記に展開される。引数は後ろ側から省略可能。`min` のデフォルト値は `0`、`max` のデフォルト値は `2147483647` である。`{{random()}}` で 32bit 整数値の表現範囲のうち正の値のみに展開される。例えば seed 値を実行単位で変更することができる。
+
+#### `choice(args ...)`
+任意の数の文字列からランダムにひとつ選択して展開する。
+
+```
+{{choice("foo", "bar")}}
+```
+
+### phase と段落
+1回の処理は1個以上の phase から構成され、それらは順番に実行される。
+phase は `--phases "MyPhase1" "MyPhase2" "MyPhase3"` オプションで任意の数だけ指定可能である。 
+現在実行中の phase は、プロンプトの内容に `{{phase}}` マクロを記述することにより、実行時に参照できる。
+前の phase は `{{prev_phase}}` マクロ、次の phase は `{{next_phase}}` マクロで参照できる。
+
+例えば `--phases "{{char}}" "{{user}}" --llm-generation-prefix "{{phase}}: "` オプションを指定した場合、pahse として現在発言している人物の名前を扱い、それをプロンプトの先頭に追加することにより、LLM が当該の人物の発言を生成するように誘導する。
+`prompt.txt` の内容に phase の要素に関する説明を含めることにより、1回の処理を複数の工程に分割し、動的に生成の方法を制御することができる。
+
+`--llm-paragraphs-file` オプションで段落ファイルを指定した場合、段落ファイルに含まれる内容が phase に割り当てられる。
+段落ファイルは、順序リストあるいは非順序リストにより段落の名前を記述し、その直後にインデントされた順序リストあるいは非順序リストによりその段落の説明を記述した、マークダウン記法に準拠したファイルである。下記は段落ファイルの具体例である。
+
+```
+1. 段落1の名前
+    * 説明1
+    * 説明2
+    * 説明3
+2. 段落2の名前
+    * 説明1
+    * 説明2
+    * 説明3
+3. 段落3の名前
+    * 説明1
+    * 説明2
+    * 説明3
+```
+
+具体的な利用例として、`prompt.txt` に下記のように記述すれば、現在の段落と前後の段落に関する情報をプロンプトに含めることができる。
+
+```
+# 段落の情報
+## 現在の段落
+{{phase}}
+
+## 前の段落
+{{prev_phase}}
+
+## 次の段落
+{{next_phase}}
+```
+
+これにより、LLM が物語として一貫し、秩序正しいテキストを生成するよう誘導することができる。
+
+### 使用可能な演算子
+* 代入演算子: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `^=`, `|=`
+* 比較演算子: `==`, `!=`, `<`, `>`, `<=`
+* 二項演算子: `<<`, `>>`, `+`, `-`, `*`, `/`, `%`
+* 前置演算子: `++`, `--`, `+`, `-`, `!`, `~`
+* 後置演算子: `++`, `--`
+
+一般的なプログラミング言語で使用可能な基本的な演算子は概ね提供されるが、ポインタや参照等は提供されない。
+マクロの評価中に型の不整合等で問題が発生した場合、当該のマクロ全体は空文字列として評価され、ログに警告が出力される。
+
+### コードブロック単位のファイル出力
+`--llm-code-block-extract` オプションを指定することにより、LLM の出力に含まれる markdown 形式のコードブロックをそれぞれファイルとして出力することができる。ファイル名は拡張子を省略して記述し、実行時に `.txt` を補完して解釈される。
+
+````
+```foo
+aaa
+bbb
+ccc
+```
+
+```bar
+aaa
+bbb
+ccc
+```
+
+```stdout
+aaa
+bbb
+ccc
+```
+````
+
+ただし、 `stdout` が指定された場合、そのコードブロックの内容はファイルではなく標準出力に出力される。
+これらの機能は、LLM の出力を複数に分割し、それぞれを再利用するために利用することができる。
+コードブロックを出力するためのプロンプトとは、例えば以下のようなものである。
+
+````
+# 命令
+後述する出力形式に従い回答をコードブロックとして出力せよ。コードブロックの名前は厳密にそのまま利用せよ。
+
+# 出力形式
+```output\{{datetime}}
+(中略)
+```
+````
+
+<!-- マクロ仕様ここまで -->
+
+## サーバーの起動と終了
+
+テキストや画像、音声などを横断的に生成したい場合、以下のコマンドラインオプションで同期的にサーバーを起動あるいは終了することができる。現在は koboldcpp を対象として想定している。その他のサーバーにも対応する予定。
+
+### サーバーの起動
+```
+Hermit --mode create-process --server-executable-file koboldcpp.exe --server-arguments "--model %model% --port 5001" --server-host localhost --server-port 5001 --server-max-retries 60 --server-wait-ms 1000
+```
+
+`--create-process` が指定された場合、サーバーを起動するコマンドを非同期に実行後、`--server-host` と `--server-port` により指定された IPアドレス およびポートと通信が可能になるまで待機する。
+`--server-host localhost`, `--server-max-retries 60`, `--server-wait-ms 1000` は省略することができる。
+
+### サーバーの終了
+```
+Hermit --mode terminate-process --server-executable-file koboldcpp.exe
+```
+`--terminate-process` が指定された場合、指定された実行ファイルのフルパスあるいはファイル名を利用してサーバーのプロセスを終了する。
+
+## 備考
+本プロジェクトはテンプレートを多用するため、MSVC でコンパイルする際はコンパイルオプションに `/bigobj` を追加する必要がある。
+
+## ライセンス
+
+本プロジェクトは [MIT License](LICENSE) の下で提供されています。詳細はルートの `LICENSE` ファイルを参照してください。

@@ -1,0 +1,10 @@
+{
+  "name": "hermit",
+  "version-string": "0.1.0",
+  "description": "Windows C++20 CLI application for text, image, and audio generation",
+  "supports": "windows & x64",
+  "dependencies": [
+    "boost",
+    "gtest"
+  ]
+}

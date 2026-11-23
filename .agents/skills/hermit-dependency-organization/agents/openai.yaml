@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hermit Dependency Organization"
+  short_description: "Hermit の C++ 依存関係を整理し資料と検証を同期する"
+  default_prompt: "Hermit のコード依存関係を整理し、最小ヘッダー参照と技術仕様書を同期してください。"

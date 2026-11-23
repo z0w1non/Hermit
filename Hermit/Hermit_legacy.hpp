@@ -1,0 +1,31 @@
+#ifndef HERMIT_LEGACY_HPP
+#define HERMIT_LEGACY_HPP
+
+#include "Hermit_types.hpp"
+#include "Hermit_llm_types.hpp"
+#include "Hermit_command_line.hpp"
+#include "Hermit_string_utils.hpp"
+#include "Hermit_filesystem.hpp"
+#include "Hermit_aux_config.hpp"
+#include "Hermit_llm_config.hpp"
+#include "Hermit_sd_config.hpp"
+#include "Hermit_tg_kc_config.hpp"
+#include "Hermit_config.hpp"
+#include "Hermit_builtin.hpp"
+#include "Hermit_http.hpp"
+#include "Hermit_llm.hpp"
+#include "Hermit_generation.hpp"
+#include "Hermit_log.hpp"
+#include "Hermit_runtime.hpp"
+#include "Hermit_png.hpp"
+#include "Hermit_core.hpp"
+#include "Hermit_parser_types.hpp"
+#include "Hermit_parser.hpp"
+#include "Hermit_tcp.hpp"
+#include "Hermit_app_types.hpp"
+#include "Hermit_media_config.hpp"
+#include "Hermit_lru.hpp"
+#include "Hermit_templates.hpp"
+#include "Hermit_lru_impl.hpp"
+
+#endif

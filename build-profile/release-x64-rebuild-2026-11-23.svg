@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="780" viewBox="0 0 960 780">
+  <style>
+    text { font-family: "Segoe UI", "Yu Gothic UI", sans-serif; fill: #17202a; }
+    .title { font-size: 24px; font-weight: 600; }
+    .sub { font-size: 13px; fill: #566573; }
+    .label { font-size: 13px; }
+    .value { font-size: 12px; font-weight: 600; }
+    .grid { stroke: #d5d8dc; stroke-width: 1; }
+    .front { fill: #2874a6; }
+    .back { fill: #e67e22; }
+  </style>
+  <rect width="960" height="780" fill="#fbfcfc"/>
+  <text x="28" y="36" class="title">Hermit Release x64 rebuild: compile time by translation unit</text>
+  <text x="28" y="60" class="sub">MSVC 14.52 /Bt+, serial measurement (/m:1), 2026-11-23</text>
+  <rect x="665" y="27" width="14" height="14" class="front"/><text x="685" y="39" class="sub">front end</text>
+  <rect x="775" y="27" width="14" height="14" class="back"/><text x="795" y="39" class="sub">back end</text>
+  <line x1="250" y1="82" x2="250" y2="735" class="grid"/>
+  <line x1="450" y1="82" x2="450" y2="735" class="grid"/>
+  <line x1="650" y1="82" x2="650" y2="735" class="grid"/>
+  <line x1="850" y1="82" x2="850" y2="735" class="grid"/>
+  <text x="246" y="760" class="sub">0s</text><text x="442" y="760" class="sub">10s</text><text x="642" y="760" class="sub">20s</text><text x="842" y="760" class="sub">30s</text>
+  <g transform="translate(0,90)">
+    <text x="238" y="15" text-anchor="end" class="label">Hermit_parser.cpp</text><rect x="250" y="2" width="573" height="18" class="front"/><rect x="823" y="2" width="4" height="18" class="back"/><text x="833" y="15" class="value">28.84s</text>
+    <text x="238" y="51" text-anchor="end" class="label">test/test.cpp</text><rect x="250" y="38" width="266" height="18" class="front"/><rect x="516" y="38" width="78" height="18" class="back"/><text x="600" y="51" class="value">17.19s</text>
+    <text x="238" y="87" text-anchor="end" class="label">Hermit_builtin.cpp</text><rect x="250" y="74" width="243" height="18" class="front"/><rect x="493" y="74" width="1" height="18" class="back"/><text x="500" y="87" class="value">12.20s</text>
+    <text x="238" y="123" text-anchor="end" class="label">Hermit_cu.cpp</text><rect x="250" y="110" width="171" height="18" class="front"/><rect x="421" y="110" width="1" height="18" class="back"/><text x="428" y="123" class="value">8.59s</text>
+    <text x="238" y="159" text-anchor="end" class="label">Hermit_llm.cpp</text><rect x="250" y="146" width="160" height="18" class="front"/><rect x="410" y="146" width="1" height="18" class="back"/><text x="417" y="159" class="value">8.05s</text>
+    <text x="238" y="195" text-anchor="end" class="label">Hermit_sb.cpp</text><rect x="250" y="182" width="158" height="18" class="front"/><rect x="408" y="182" width="1" height="18" class="back"/><text x="415" y="195" class="value">7.94s</text>
+    <text x="238" y="231" text-anchor="end" class="label">Hermit_log.cpp</text><rect x="250" y="218" width="153" height="18" class="front"/><rect x="403" y="218" width="1" height="18" class="back"/><text x="410" y="231" class="value">7.66s</text>
+    <text x="238" y="267" text-anchor="end" class="label">Hermit_sd.cpp</text><rect x="250" y="254" width="136" height="18" class="front"/><rect x="386" y="254" width="1" height="18" class="back"/><text x="393" y="267" class="value">6.81s</text>
+    <text x="238" y="303" text-anchor="end" class="label">Hermit_process.cpp</text><rect x="250" y="290" width="135" height="18" class="front"/><rect x="385" y="290" width="1" height="18" class="back"/><text x="392" y="303" class="value">6.78s</text>
+    <text x="238" y="339" text-anchor="end" class="label">Hermit_string_extra.cpp</text><rect x="250" y="326" width="132" height="18" class="front"/><rect x="382" y="326" width="1" height="18" class="back"/><text x="389" y="339" class="value">6.65s</text>
+    <text x="238" y="375" text-anchor="end" class="label">Hermit_iteration.cpp</text><rect x="250" y="362" width="131" height="18" class="front"/><rect x="381" y="362" width="1" height="18" class="back"/><text x="388" y="375" class="value">6.57s</text>
+    <text x="238" y="411" text-anchor="end" class="label">Hermit_tcp.cpp</text><rect x="250" y="398" width="126" height="18" class="front"/><rect x="376" y="398" width="1" height="18" class="back"/><text x="383" y="411" class="value">6.31s</text>
+    <text x="238" y="447" text-anchor="end" class="label">Hermit_core.cpp</text><rect x="250" y="434" width="113" height="18" class="front"/><rect x="363" y="434" width="1" height="18" class="back"/><text x="370" y="447" class="value">5.69s</text>
+    <text x="238" y="483" text-anchor="end" class="label">Hermit_command_line.cpp</text><rect x="250" y="470" width="112" height="18" class="front"/><rect x="362" y="470" width="1" height="18" class="back"/><text x="369" y="483" class="value">5.62s</text>
+    <text x="238" y="519" text-anchor="end" class="label">Hermit_string_utils.cpp</text><rect x="250" y="506" width="98" height="18" class="front"/><rect x="348" y="506" width="1" height="18" class="back"/><text x="355" y="519" class="value">4.91s</text>
+    <text x="238" y="555" text-anchor="end" class="label">Hermit_filesystem.cpp</text><rect x="250" y="542" width="95" height="18" class="front"/><rect x="345" y="542" width="1" height="18" class="back"/><text x="352" y="555" class="value">4.79s</text>
+    <text x="238" y="591" text-anchor="end" class="label">main.cpp</text><rect x="250" y="578" width="84" height="18" class="front"/><rect x="334" y="578" width="1" height="18" class="back"/><text x="341" y="591" class="value">4.25s</text>
+    <text x="238" y="627" text-anchor="end" class="label">Hermit_png.cpp</text><rect x="250" y="614" width="51" height="18" class="front"/><rect x="301" y="614" width="1" height="18" class="back"/><text x="308" y="627" class="value">2.56s</text>
+  </g>
+</svg>
