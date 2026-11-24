@@ -278,7 +278,6 @@ namespace Hermit
 
             std::string response{ completions(cfg, truncated_prompt, ctx) };
             response = remove_reasoning(response, cfg.llm.reasoning_prefix, cfg.llm.reasoning_suffix);
-            response += cfg.llm.generation_suffix;
 
             filesystem::write_file(cfg, response, cfg.llm.output_file, std::ios_base::app);
 

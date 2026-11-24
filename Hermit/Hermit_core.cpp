@@ -62,6 +62,11 @@ namespace Hermit
         variable_map[std::string{ key }] = value;
     }
 
+    void context::erase(std::string_view key)
+    {
+        variable_map.erase(std::string{ key });
+    }
+
     const value_type* context::get(std::string_view key) const
     {
         const std::string key_string{ key };

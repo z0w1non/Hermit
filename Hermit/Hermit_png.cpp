@@ -1,8 +1,10 @@
-#include "Hermit_png.hpp"
-#include "Hermit_errors.hpp"
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <vector>
+
+#include "Hermit_png.hpp"
+#include "Hermit_errors.hpp"
 
 namespace Hermit
 {
@@ -26,6 +28,7 @@ namespace Hermit
         }
 
         constexpr const crc_table_type crc_table{ generate_crc_table() };
+        constexpr std::array<unsigned char, 8> png_signature{ 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
 
         std::uint32_t calculate_crc32(const std::uint8_t* data, size_t length)
         {
@@ -78,7 +81,10 @@ namespace Hermit
         std::string insert_metadata(std::string_view image, std::string_view key, std::string_view metadata)
         {
             constexpr std::size_t ihdr_end_offset{ 8 + 25 };
-            if (image.size() < ihdr_end_offset)
+            if (image.size() < ihdr_end_offset
+                || !std::equal(png_signature.begin(), png_signature.end(), reinterpret_cast<const unsigned char*>(image.data()))
+                || image[8] != 0 || image[9] != 0 || image[10] != 0 || image[11] != 13
+                || image.substr(12, 4) != "IHDR")
             {
                 Hermit::throw_exception(png_exception{});
             }
@@ -107,20 +113,21 @@ namespace Hermit
             const std::size_t size{ image.size() };
 
             constexpr std::size_t png_header_size{ 8 };
-            if (size < png_header_size || data[0] != 0x89 || data[1] != 'P' || data[2] != 'N' || data[3] != 'G')
+            if (size < png_header_size || !std::equal(png_signature.begin(), png_signature.end(), data))
             {
                 Hermit::throw_exception(png_exception{});
             }
 
             std::size_t offset{ png_header_size };
 
-            while (offset + 12 <= size)
+            while (offset <= size && size - offset >= 12)
             {
                 const std::uint32_t length{ read_uint32_be(data + offset) };
                 const std::string_view type{ reinterpret_cast<const char*>(data + offset + 4), 4 };
 
                 const std::size_t data_offset{ offset + 8 };
-                if (data_offset + length + 4 > size)
+                const std::size_t remaining_size{ size - data_offset };
+                if (remaining_size < 4 || static_cast<std::size_t>(length) > remaining_size - 4)
                 {
                     break;
                 }

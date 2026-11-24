@@ -11,6 +11,12 @@ TEST(llm, parses_markdown_code_blocks_and_removes_reasoning)
     ASSERT_EQ(blocks.size(), 2U);
     EXPECT_EQ(blocks.at("cpp"), "int main() {}\n");
     EXPECT_EQ(blocks.at("text"), "hello\n");
+    const Hermit::llm::code_blocks unix_unsafe_name{ Hermit::llm::extract_code_block_from_markdown("```../../outside\npayload\n```") };
+    ASSERT_EQ(unix_unsafe_name.size(), 1U);
+    EXPECT_EQ(unix_unsafe_name.begin()->first, "....outside");
+    const Hermit::llm::code_blocks windows_unsafe_name{ Hermit::llm::extract_code_block_from_markdown("```..\\..\\outside\npayload\n```") };
+    ASSERT_EQ(windows_unsafe_name.size(), 1U);
+    EXPECT_EQ(windows_unsafe_name.begin()->first, "....outside");
     EXPECT_EQ(Hermit::llm::remove_reasoning("before<think>internal</think>after", "<think>", "</think>"), "beforeafter");
     EXPECT_EQ(Hermit::llm::remove_reasoning("unchanged", "", "</think>"), "unchanged");
 }

@@ -37,6 +37,9 @@ namespace Hermit
             Hermit::throw_exception(logic_error{});
         }
 
+        ctx.erase("prev_phase");
+        ctx.erase("next_phase");
+
         if (phase_index > 0)
         {
             ctx.set("prev_phase", phases[phase_index - 1]);
@@ -78,11 +81,15 @@ namespace Hermit
 
     std::string sanitize_as_filename(std::string_view name)
     {
-        const std::regex illegal_chars{ R"([:*?"<>|#])" };
+        const std::regex illegal_chars{ R"([\\/:*?"<>|#])" };
         std::string sanitized{ name.begin(), name.end() };
         std::replace(sanitized.begin(), sanitized.end(), ' ', '_');
         sanitized = std::regex_replace(sanitized, illegal_chars, "");
         boost::algorithm::trim(sanitized);
+        if (sanitized == "." || sanitized == "..")
+        {
+            sanitized.clear();
+        }
         return sanitized;
     }
 

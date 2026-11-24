@@ -10,13 +10,6 @@
 #include "Hermit_public.hpp"
 #include "Hermit_errors.hpp"
 
-TEST(public_api, exposes_lightweight_macro_entrypoint)
-{
-    using expand_macro_type = std::string(*)(std::string_view, const Hermit::config&, const Hermit::context&);
-    const expand_macro_type expand_macro{ &Hermit::expand_macro };
-    EXPECT_NE(expand_macro, nullptr);
-}
-
 #include "Hermit_builtin.hpp"
 #include "Hermit_config.hpp"
 #include "Hermit_context.hpp"
@@ -64,6 +57,24 @@ TEST(builtin, reads_text_file_relative_to_configured_base_path)
     std::filesystem::remove_all(base_path);
 }
 
+TEST(builtin, expands_context_variables_in_file_macro_base_path)
+{
+    Hermit::config cfg;
+    const std::filesystem::path base_path{ std::filesystem::temp_directory_path() / "hermit_macro_context_file_test" };
+    std::filesystem::remove_all(base_path);
+    std::filesystem::create_directories(base_path);
+    cfg.base_path = "{{ root }}";
+    cfg.ctx.set("root", base_path.string());
+    Hermit::filesystem::write_file(cfg, "context content", "input.txt");
+
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "input.txt" } };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::file(args)), "context content");
+
+    std::filesystem::remove_all(base_path);
+}
+
 TEST(builtin, injects_random_source)
 {
     Hermit::config cfg;
@@ -92,6 +103,17 @@ TEST(builtin, registry_exposes_supported_macros_and_rejects_unknown_names)
     for (const std::string_view name : { "int", "double", "char", "string", "file", "head", "tail", "head_tail", "json_literal", "getenv", "setenv", "generated", "random", "choice", "exec", "code_block", "summary", "root", "parent", "stem", "extension" })
         EXPECT_TRUE(Hermit::builtin::get_macro(name).has_value()) << name;
     EXPECT_FALSE(Hermit::builtin::get_macro("unknown_macro").has_value());
+}
+
+TEST(builtin, invokes_registry_macro_through_type_erased_callable)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ 123 };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    const std::optional<Hermit::builtin::macro_type> macro{ Hermit::builtin::get_macro("string") };
+    ASSERT_TRUE(macro.has_value());
+    EXPECT_EQ(Hermit::value_to_string((*macro)(args)), "123");
 }
 
 TEST(builtin, converts_macro_arguments_and_rejects_invalid_argument_counts)
@@ -132,6 +154,25 @@ TEST(builtin, escapes_json_and_extracts_named_code_blocks)
     EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::code_block(missing_args)).empty());
 }
 
+TEST(builtin, escapes_json_control_characters_and_backslashes)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "\\\"\t\r" } };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::json_literal(args)), "\\\\\\\"\\t\\r");
+}
+
+TEST(builtin, selects_the_requested_block_from_multiple_code_blocks)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::string markdown{ "```cpp\nint cpp_value;\n```\n```python\npython_value = 1\n```" };
+    const std::vector<Hermit::value_type> arguments{ markdown, std::string{ "python" } };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::code_block(args)), "python_value = 1\n");
+}
+
 TEST(builtin, applies_path_macros_to_relative_paths)
 {
     Hermit::config cfg;
@@ -153,6 +194,38 @@ TEST(builtin, handles_extensionless_relative_paths)
     EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::parent(args)).empty());
     EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::stem(args)), "README");
     EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::extension(args)).empty());
+}
+
+TEST(builtin, returns_platform_root_for_absolute_paths)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::filesystem::path absolute_path{ std::filesystem::temp_directory_path() / "macro.txt" };
+    const std::vector<Hermit::value_type> arguments{ absolute_path.string() };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::root(args)), absolute_path.root_path().string());
+}
+
+TEST(builtin, returns_empty_components_for_empty_path)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{} };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::root(args)).empty());
+    EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::parent(args)).empty());
+    EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::stem(args)).empty());
+    EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::extension(args)).empty());
+}
+
+TEST(builtin, preserves_compound_stem_before_final_extension)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "archive.tar.gz" } };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::stem(args)), "archive.tar");
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::extension(args)), ".gz");
 }
 
 TEST(builtin, uses_injected_random_bounds_for_default_arguments)
@@ -181,6 +254,23 @@ TEST(builtin, choice_returns_the_only_candidate_without_random_selection)
     })), "only");
 }
 
+TEST(builtin, supports_partial_random_bounds_and_non_string_choice_values)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> random_arguments{ 5 };
+    const Hermit::builtin::macro_argument_type random_args{ random_arguments, cfg, ctx };
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::random(random_args, [](std::int64_t min, std::int64_t max) {
+        EXPECT_EQ(min, 5);
+        EXPECT_EQ(max, static_cast<std::int64_t>((std::numeric_limits<std::uint32_t>::max)()));
+        return std::int64_t{ 6 };
+    })), "6");
+
+    const std::vector<Hermit::value_type> choice_arguments{ 11, true };
+    const Hermit::builtin::macro_argument_type choice_args{ choice_arguments, cfg, ctx };
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::choice(choice_args, [](std::int64_t, std::int64_t) { return std::int64_t{ 1 }; })), "1");
+}
+
 TEST(builtin, truncates_head_tail_macros_using_cached_token_counts)
 {
     Hermit::config cfg;
@@ -201,4 +291,22 @@ TEST(builtin, truncates_head_tail_macros_using_cached_token_counts)
     const std::vector<Hermit::value_type> unchanged_arguments{ std::string{ "aa\nbbb\ncccc" }, 20, 20 };
     const Hermit::builtin::macro_argument_type unchanged_args{ unchanged_arguments, cfg, ctx };
     EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::head_tail(unchanged_args)), "aa\nbbb\ncccc");
+}
+
+TEST(builtin, preserves_empty_input_in_truncation_macros)
+{
+    Hermit::config cfg;
+    cfg.lru_cache = Hermit::config::cache_type{ [](std::string_view value) { return static_cast<int>(value.size()); } };
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> head_arguments{ std::string{}, 1 };
+    const Hermit::builtin::macro_argument_type head_args{ head_arguments, cfg, ctx };
+    EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::head(head_args)).empty());
+
+    const std::vector<Hermit::value_type> tail_arguments{ std::string{}, 1 };
+    const Hermit::builtin::macro_argument_type tail_args{ tail_arguments, cfg, ctx };
+    EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::tail(tail_args)).empty());
+
+    const std::vector<Hermit::value_type> head_tail_arguments{ std::string{}, 1, 1 };
+    const Hermit::builtin::macro_argument_type head_tail_args{ head_tail_arguments, cfg, ctx };
+    EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::head_tail(head_tail_args)).empty());
 }

@@ -117,10 +117,12 @@ namespace Hermit
                 abstract_syntax_tree_type abstract_syntax_tree;
                 grammar::iterator_type iter{ document.begin() };
                 const grammar::iterator_type end{ document.end() };
-                if (boost::spirit::qi::parse(iter, end, grammar, abstract_syntax_tree) && iter != end)
+                const bool parsed{ boost::spirit::qi::parse(iter, end, grammar, abstract_syntax_tree) };
+                if (!parsed || iter != end)
                 {
                     std::ostringstream description;
                     description << "Parse failed at: " << std::string{ iter, end };
+                    HERMIT_LOG(error) << description.str();
                     Hermit::throw_exception(macro_exception{} << error_info::description{ description.str() });
                 }
                 return abstract_syntax_tree;
@@ -206,20 +208,17 @@ namespace Hermit
             return result;
         }
 
+
         value_reference_type evaluate_expression(const expression_type& expr, const config& cfg, context& ctx)
         {
-            if (expr.expressions.empty())
+            if (expr.empty())
             {
                 Hermit::throw_exception(macro_exception{});
             }
             value_reference_type last{};
-            for (const assignment_expression_type& assignment_expression : expr.expressions)
+            for (const assignment_expression_type& assignment_expression : expr)
             {
                 last = evaluate_assignment_expression(assignment_expression, cfg, ctx);
-            }
-            if (expr.terminated)
-            {
-                return std::string{};
             }
             return last;
         }

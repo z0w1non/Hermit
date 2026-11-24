@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <boost/optional.hpp>
 #include <boost/variant.hpp>
 #include <boost/variant/recursive_variant.hpp>
 #include <boost/fusion/include/adapt_struct.hpp>
@@ -155,17 +156,57 @@ namespace Hermit
         };
 
         struct expression_type
+            : std::vector<assignment_expression_type>
         {
-            std::vector<assignment_expression_type> expressions;
-            bool terminated{};
+            using vector::vector;
         };
 
-        using statement_type = std::vector<expression_type>;
+        struct assignment_statement_type
+        {
+            assignment_expression_type expression;
+        };
 
-        struct placeholder_type
+        struct expression_statement_type
         {
             expression_type expression;
         };
+
+        struct compound_statement_type;
+        struct if_statement_type;
+        struct while_statement_type;
+
+        using statement_type = boost::variant<
+            expression_statement_type,
+            assignment_statement_type,
+            boost::recursive_wrapper<compound_statement_type>,
+            boost::recursive_wrapper<if_statement_type>,
+            boost::recursive_wrapper<while_statement_type>>;
+
+        struct compound_statement_type
+        {
+            std::vector<statement_type> statements;
+        };
+
+        struct if_statement_type
+        {
+            expression_type condition;
+            statement_type statement;
+            boost::optional<statement_type> else_statement;
+        };
+
+        struct while_statement_type
+        {
+            expression_type condition;
+            statement_type statement;
+        };
+
+        using placeholder_result_type = boost::variant<std::vector<statement_type>, expression_type>;
+
+        struct placeholder_type
+        {
+            placeholder_result_type content;
+        };
+
 
         using node_type = boost::variant<std::string, placeholder_type>;
         using abstract_syntax_tree_type = std::vector<node_type>;
@@ -181,6 +222,11 @@ BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::conditional_expression_node_type, cond
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::macro_expression_node_type, name, arguments)
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::variable_type, name)
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::assignment_expression_node_type, lhs, operator_, rhs)
-BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::expression_type, expressions, terminated)
+BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::assignment_statement_type, expression)
+BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::expression_statement_type, expression)
+BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::compound_statement_type, statements)
+BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::if_statement_type, condition, statement, else_statement)
+BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::while_statement_type, condition, statement)
+BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::placeholder_type, content)
 
 #endif

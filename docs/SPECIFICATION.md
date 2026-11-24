@@ -72,7 +72,7 @@ Release x64 のフルビルド実測値は約 **5分00秒（300秒、10秒精度
 | `Hermit/Hermit_parser_impl.hpp` | AST・Boost.Spirit 文法・評価 visitor の実装定義。parser.cpp 専用。visitor 翻訳単位では `HERMIT_PARSER_VISITORS_ONLY` により文法コンストラクター本体を除外し、文法型は parser.cpp で明示的に実体化する。 |
 | `Hermit/Hermit_core.cpp` | 設定値、コンテキスト、LRU キャッシュ、マクロなどの基盤処理。 |
 | `Hermit/Hermit_parser.cpp` | プロンプト・フェーズ・マクロの解析処理。 |
-| `Hermit/Hermit_parser_visitors.cpp` | AST 評価 visitor と代入 visitor の実装。 |
+| `Hermit/Hermit_parser_visitors.cpp` | AST 評価 visitor と実験的 statement 評価の実装（通常ビルドの公開経路から切り離し）。 |
 | `Hermit/Hermit_parser_grammar_symbols.hpp` | Spirit 文法の symbol 型の完全定義。 |
 | `Hermit/Hermit_parser_lexical_rules.hpp` | 字句・基本値 rule の component。 |
 | `Hermit/Hermit_parser_primary_macro_rules.hpp` | primary／macro rule の component。lexical component を参照する。 |
@@ -93,7 +93,7 @@ Release x64 のフルビルド実測値は約 **5分00秒（300秒、10秒精度
 | `Hermit/Hermit_builtin_process.cpp` | `exec` と Boost.Process/Asio のプロセス実行境界。 |
 | `Hermit/Hermit_builtin_input.cpp` | 日時マクロ、対話入力判定、標準入力読み取り。 |
 | `Hermit/Hermit_builtin_llm.cpp` | `generated`／`summary` の LLM 呼び出しマクロ。 |
-| `Hermit/Hermit_png.cpp` | PNG の tEXt チャンクから生成パラメーターを抽出。 |
+| `Hermit/Hermit_png.cpp` | PNG署名・IHDR・chunk長を検証してtEXtメタデータを挿入・抽出。 |
 | `Hermit/Hermit_tcp.cpp` | TCP 接続確認とサーバー待機。 |
 | `Hermit/Hermit_filesystem.cpp` | ファイル読み書き、パス解決、プロンプトファイル処理。 |
 | `Hermit/Hermit_llm.cpp` | Completions/Chat Completions、トークン数、会話履歴。 |
@@ -110,7 +110,7 @@ Release x64 のフルビルド実測値は約 **5分00秒（300秒、10秒精度
 | `test/test.cpp` | Google Test のテストケース。 |
 | `test/test_support.hpp` | テスト共通ヘルパー、出力リダイレクタ、Mock 型。 |
 | `test/test_builtin.cpp` | builtin の依存性注入テスト。 |
-| `test/test_parser.cpp` | parser の再帰展開・代入・停止条件テスト。 |
+| `test/test_parser.cpp` | parser の AST 構造、公開式評価、無効statement構文の拒否、再帰展開・停止条件テスト。実験的statementテストは機能フラグで隔離。 |
 | `test/test_filesystem.cpp` | filesystem のパス、拡張子、MIME 変換テスト。 |
 | `test/test_llm.cpp` | LLM の純粋な Markdown・項目リスト変換テスト。 |
 | `test/test_cu.cpp` | ComfyUI multipart 要求生成テスト。 |
@@ -120,7 +120,7 @@ Release x64 のフルビルド実測値は約 **5分00秒（300秒、10秒精度
 | `test/test_llm_backend.cpp` | TG／Kobold backend の要求・応答、Chat 形式、共通モック契約のテスト。 |
 | `Hermit/HermitLib.vcxproj` | Hermit 実装を Static Library としてビルドする共通ライブラリプロジェクト。 |
 
-現在の単体テストは 75 件（22 テストスイート）で、CLI の既定値・共通/バックエンド別オプション反映・`--kc-bypass-eos` と `trim_stop` の独立性・不正モードエラー、例外安全なエントリーポイント、LRU、context、文字列・filesystem の正常系と未知拡張子エラー、組み込みマクロの registry、型変換、JSON エスケープ、コードブロック抽出、パス操作、既定引数の乱数境界、環境 accessor／random source／process runner 注入、全 command mode、LLM/SD の API ターゲット解決、LLM 共通バックエンド境界の Mock 契約、テンプレートパラメータで注入した HTTP transport と LLM/SD/SB request executor の Mock 契約、LLM 各バックエンドの token-count/completions/chat completions JSON 要求・応答解析、構文不正・必須フィールド欠落応答のエラー、Stable Diffusion の txt2img 要求とオプショナルスクリプト、Style-Bert-VITS2 の model/speaker 名・ID フォールバックを含む条件付き URL、ComfyUI の multipart 境界、LLM のコードブロック・推論除去・項目リスト解析、parser の AST 評価・組み込みマクロ評価・代入・再帰停止、非テンプレート parse/evaluate 境界、公開モード変換を検証します。
+現在の単体テストは 102 件（25 テストスイート）で、CLI の既定値・共通/バックエンド別オプション反映・`--kc-bypass-eos` と `trim_stop` の独立性・不正モードエラー、例外安全なエントリーポイント、LRU、context の継承・ローカル消去、phase 境界、文字列・filesystem の正常系と未知拡張子エラー、PNG署名・chunk境界、組み込みマクロの registry、型変換、JSON エスケープ、コードブロック抽出とファイル名のパストラバーサル防止、パス操作、既定引数の乱数境界、環境 accessor／random source／process runner 注入、全 command mode、LLM/SD の API ターゲット解決、LLM 共通バックエンド境界の Mock 契約、HTTP transport と各 request executor の Mock 契約、各生成バックエンドの要求・応答解析、LLM のコードブロック・推論除去・項目リスト解析、公開parserの式 AST 評価・組み込みマクロ評価・再帰停止・条件式分岐・論理条件評価、マクロ変数・関数引数・ネスト・区切り記号不整合の解析、Qi 属性変換とplaceholder候補のbacktracking、予約語と識別子境界、代入・増減・statement構文の拒否、非テンプレート parse/evaluate 境界、公開モード変換を検証します。実験的statement評価テストは `HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS` 時のみ有効で、既定構成には含めません。
 
 ## アプリケーション固有用語
 
@@ -175,11 +175,11 @@ Hermit_config.hpp: Hermit_context.hpp Hermit_lru.hpp Hermit_app_types.hpp Hermit
 Hermit_command_line.hpp: Hermit_context.hpp <istream> <string> <string_view> <vector>
 Hermit_string_utils.hpp: Hermit_context.hpp Hermit_platform.hpp nlohmann/json.hpp boost/archive/iterators/base64_from_binary.hpp boost/archive/iterators/binary_from_base64.hpp boost/archive/iterators/transform_width.hpp
 Hermit_filesystem.hpp: Hermit_config.hpp <filesystem> <string> <string_view> <vector>
-Hermit_parser_types.hpp: Hermit_context.hpp boost/fusion/include/adapt_struct.hpp boost/variant.hpp
+Hermit_parser_types.hpp: Hermit_context.hpp boost/fusion/include/adapt_struct.hpp boost/optional.hpp boost/variant.hpp
 Hermit_core.hpp: Hermit_config.hpp Hermit_app_types.hpp Hermit_context.hpp Hermit_sd_config.hpp Hermit_llm_types.hpp
 Hermit_parser.hpp: Hermit_parser_types.hpp Hermit_config.hpp Hermit_templates.hpp boost/spirit/include/qi.hpp
 Hermit_parser_impl.hpp: Hermit_parser.hpp Hermit_errors.hpp Hermit_templates_core.hpp
-Hermit_parser_visitors.cpp: Hermit_parser_impl.hpp Hermit_log.hpp
+Hermit_parser_visitors.cpp: Hermit_parser_impl.hpp Hermit_config.hpp Hermit_log.hpp
 Hermit_tcp.hpp: boost/asio/io_context.hpp boost/beast/core.hpp boost/beast/http.hpp
 Hermit_http.hpp: boost/url.hpp
 Hermit_llm.hpp: Hermit_config.hpp Hermit_llm_types.hpp Hermit_context.hpp nlohmann/json.hpp
@@ -326,7 +326,7 @@ main.cpp: Hermit_runtime.hpp
 | `--llm-max-completion-iterations` | — | Completions の最大継続回数を指定する。 |
 | `--llm-reasoning-prefix` | — | 除去対象 reasoning の開始文字列を指定する。 |
 | `--llm-reasoning-suffix` | — | 除去対象 reasoning の終了文字列を指定する。 |
-| `--llm-code-block-extract` | — | コードブロック抽出を有効にする。 |
+| `--llm-code-block-extract` | — | コードブロック抽出とファイル名のパストラバーサル防止を有効にする。 |
 | `--llm-mode` | — | Completions または Chat Completions を選択する。 |
 
 #### Text-Generation-webui (`tg`)
@@ -585,7 +585,7 @@ main.cpp: Hermit_runtime.hpp
 | `--llm-reasoning-prefix`, `--llm-reasoning-suffix` | 空。両方の間にある reasoning 部分を結果から除去 |
 | `--llm-code-block-extract` | false。true の場合、応答の Markdown コードブロックを個別出力 |
 
-Completions のプロンプトは、テンプレート展開と generation prefix の追加後にトークン数を問い合わせます。残りコンテキストと backend の最大生成数を考慮して生成し、応答を次の要求の末尾に加えて継続します。現行実装では `completions()` が generation suffix を追加し、通常のファイル出力処理も suffix を追加するため、通常の `tg` / `kc` 出力では suffix が二度付加されます。`generated()` など `completions()` を直接呼ぶマクロでは一度です。
+Completions のプロンプトは、テンプレート展開と generation prefix の追加後にトークン数を問い合わせます。残りコンテキストと backend の最大生成数を考慮して生成し、応答を次の要求の末尾に加えて継続します。`completions()` が generation suffix を追加し、ファイル出力側では追加しません。通常の `tg` / `kc` 出力と `generated()` などのマクロで suffix は一度だけ付加されます。
 
 Chat Completions はプロンプトを user message として追加し、必要に応じて画像も含めます。応答後に assistant message を追加し、messages JSON をチャットファイルに保存します。既存チャットファイルが読めない場合は空の会話から開始します。プロンプトにはサーバー側のチャットテンプレートを使うための本文を渡します。
 
@@ -598,17 +598,45 @@ Chat Completions はプロンプトを user message として追加し、必要�
 
 ## マクロ言語
 
-マクロは `{{...}}` で囲みます。文字列中に変数 `{{name}}`、関数 `{{function(arg, ...)}}` を記述できます。各ファイル内容とファイルパス等、コード上で展開を呼び出す箇所で評価されます。式は再帰下降パーサーで評価され、最大再帰深度は 32 です。反復・条件分岐の文構文はありません。
+マクロは `{{...}}` で囲みます。文字列中に変数 `{{name}}`、関数 `{{function(arg, ...)}}` を記述できます。各ファイル内容とファイルパス等、コード上で展開を呼び出す箇所で評価されます。式は Boost.Spirit Qi の AST と visitor で解析・評価され、最大再帰深度は 32 です。通常ビルドでは式placeholderだけを公開し、statement placeholder、単独代入、制御文、セミコロン付き式文は無効です。AST・rule・visitorのコードは将来の再開に備えて残しますが、公開parse経路から切り離し、内部statement parse APIも既定で失敗させます。
 
-変数の値は bool, int, char, double, string です。未定義変数への `=` は宣言と初期化になります。変数の型変更は `=` のみで可能です。評価スコープは同一ファイルと `generated` が呼び出すサブプロンプトに限定されます。`--define` で起動時に変数を渡せます。末尾の `;` は式の値を破棄し、文字列展開を空にします。マクロ評価でエラーが発生した場合、そのマクロ全体を空文字にし警告を記録します。
+### サポート範囲
+
+| 機能 | 状態 | 記法・備考 |
+| --- | --- | --- |
+| マクロ展開 | 対応 | `{{ expression }}`。通常のテキスト中に複数記述可能 |
+| マクロ変数参照 | 対応 | `{{name}}` |
+| 組み込み関数呼び出し | 対応 | `{{function(arg1, arg2)}}` |
+| リテラル | 対応 | bool、整数、浮動小数点数、文字、文字列 |
+| 代入・複合代入・前置/後置増減 | 無効 | 公開placeholder式では使用不可。内部実装コードは保持 |
+| 比較・算術・論理式 | 対応 | 比較、シフト、四則演算、ビット演算、論理演算、条件式 |
+| 式の連結 | 対応 | カンマ区切りの式列。評価結果は最後の式 |
+| 式 | 対応 | 評価結果を文字列化して placeholder の展開結果にする |
+| ステートメント | 無効 | 公開placeholder grammarから除外。AST/rule/visitorはコードに保持 |
+| `if`／`else`／`while`／複合文 | 無効 | 通常ビルドでは解析・評価されない |
+| ポインター・参照 | 未対応 | マクロ言語の値型に含まれない |
+
+公開placeholderは式だけを受け付け、式の結果を文字列展開します。statement syntax（単独代入、`;` 付き式、複合文、`if`／`else`、`while`）、代入演算子、前置/後置の増減演算子はparseできません。無効化した内部コードの再開状況は [`docs/ISSUES.md`](ISSUES.md) で管理します。
+
+### 基本構文
+
+```ebnf
+placeholder       = "{{", expression, "}}" ;
+expression        = conditional-expression ;
+macro-expression  = name, "(", [ argument-list ], ")"
+                   | name ;
+argument-list     = conditional-expression, { ",", conditional-expression } ;
+```
+
+空白は構文上の区切りとして扱われます。文字列リテラルは `"..."`、文字リテラルは `'...'` で記述し、エスケープを使用できます。式の評価結果は文字列化して展開します。公開placeholderではstatement syntax、代入演算子、前置/後置増減演算子を無効化しています。予約語 `if`、`else`、`while`、`true`、`false` は識別子として使用できません。予約語で始まる長い識別子（例: `iffy`、`elsewhere`）は使用できます。実装状況と検証結果は [`docs/ISSUES.md`](ISSUES.md) を参照してください。
+
+変数の値は bool, int, char, double, string です。`context::erase` は現在のスコープの値を消去し、親スコープに同名値があればそれを再び参照します。公開placeholderからの変数代入は無効です。`--define` で起動時に変数を渡せます。マクロ評価でエラーが発生した場合、そのマクロ全体を空文字にし警告を記録します。
 
 使用可能な演算子:
 
-- 代入: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `^=`, `|=`
 - 比較: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - 二項: `<<`, `>>`, `+`, `-`, `*`, `/`, `%`, `|`, `^`, `&`
-- 前置: `++`, `--`, `+`, `-`, `!`, `~`
-- 後置: `++`, `--`
+- 前置: `+`, `-`, `!`, `~`
 
 ポインターや参照は提供しません。
 
@@ -622,7 +650,7 @@ Chat Completions はプロンプトを user message として追加し、必要�
 | `{{datetime}}` | ローカル日時 `yyyyMMddHHmmss` |
 | `{{stdin}}` | 非対話入力時の標準入力全体。対話端末では空 |
 | `{{phase}}` | 現在の phase |
-| `{{prev_phase}}` / `{{next_phase}}` | 前後の phase。存在しない側は設定されない |
+| `{{prev_phase}}` / `{{next_phase}}` | 前後の phase。存在しない側は設定されず、phase切替時に前回値を消去 |
 
 ### 組み込み関数
 
@@ -650,9 +678,9 @@ Chat Completions はプロンプトを user message として追加し、必要�
 
 段落ファイルを使わない場合の phase は `--phases` の値です。ソースには Chat Completions 用の phase と prefix の初期化関数がありますが、現在の起動処理からは呼び出されていません。そのため `{{user}}`, `{{char}}` や `{{phase}}: ` が自動設定されるとは限りません。
 
-## コードブロック抽出
+## コードブロック抽出とファイル名のパストラバーサル防止
 
-`--llm-code-block-extract` が有効なとき、生成 Markdown の名前付きコードブロックをファイルとして出力します。ブロック名をファイル名にし、空白を `_` に置換し、`:*?"<>|#` を除去します。ファイル名の拡張子がなければ `.txt` を補完します。ブロック名が `stdout` の場合はファイルにせず標準出力へ出します。
+`--llm-code-block-extract` が有効なとき、生成 Markdown の名前付きコードブロックをファイルとして出力します。ブロック名をファイル名にし、空白を `_` に置換し、パス区切り文字と `:*?"<>|#` を除去します。単独の `.`／`..` は空名にして、出力先ディレクトリ外へ書き込めないようにします。ファイル名の拡張子がなければ `.txt` を補完します。ブロック名が `stdout` の場合はファイルにせず標準出力へ出します。
 
 ## ファイルとログ
 
@@ -669,6 +697,7 @@ Chat Completions はプロンプトを user message として追加し、必要�
 ## 課題
 
 課題は [ISSUES.md](ISSUES.md) で優先度順・解決順序順に管理します。課題表は優先度、課題、影響、状態、解決策の候補、完了条件に加え、根拠、前提・依存、次アクション、検証結果、最終更新を管理対象とします。未収集の情報は「未収集」と明記し、課題の解決時はコード・テスト・検証結果と合わせて `ISSUES.md` を更新します。
+未解決課題と未対応範囲は [ISSUES.md](ISSUES.md) で管理します。Qi 制御構文で確認した Fusion AST 属性漏れの原因と修正経緯は [MACRO_PARSER_REDEVELOPMENT.md](MACRO_PARSER_REDEVELOPMENT.md) に記録します。詳細な根拠、状態、次アクション、検証結果は [ISSUES.md](ISSUES.md) で管理します。
 現時点では仕様上の不具合と断定していない、将来の設計・検証で判断する事項です。各項目には検討の出発点となる改善案を関連付けます。
 
 | 検討事項 | 判断材料 | 改善案 |

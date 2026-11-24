@@ -19,6 +19,7 @@
 #include "Hermit_lru.hpp"
 #include "Hermit_lru_impl.hpp"
 #include "Hermit_parser.hpp"
+#include "Hermit_png.hpp"
 #include "Hermit_runtime.hpp"
 #include "Hermit_sd_config.hpp"
 #include "Hermit_string_utils.hpp"
@@ -203,6 +204,44 @@ TEST(context, inherited_values_and_override)
     EXPECT_EQ(child.get("missing"), nullptr);
 }
 
+TEST(context, erases_only_values_owned_by_current_scope)
+{
+    Hermit::context base;
+    base.set("name", std::string{ "base" });
+    Hermit::context child{ base.make_pushed() };
+    child.set("temporary", std::string{ "value" });
+
+    child.erase("temporary");
+    child.erase("name");
+
+    EXPECT_EQ(child.get("temporary"), nullptr);
+    ASSERT_NE(child.get("name"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*child.get("name")), "base");
+}
+
+TEST(runtime, clears_stale_previous_and_next_phase_variables)
+{
+    Hermit::context ctx;
+    ctx.set("prev_phase", std::string{ "stale previous" });
+    ctx.set("next_phase", std::string{ "stale next" });
+    const std::vector<std::string> phases{ "first", "last" };
+
+    Hermit::set_phase_variables(phases, 0, ctx);
+    EXPECT_EQ(ctx.get("prev_phase"), nullptr);
+    ASSERT_NE(ctx.get("next_phase"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("next_phase")), "last");
+
+    Hermit::set_phase_variables(phases, 1, ctx);
+    ASSERT_NE(ctx.get("prev_phase"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("prev_phase")), "first");
+    EXPECT_EQ(ctx.get("next_phase"), nullptr);
+
+    const std::vector<std::string> single_phase{ "only" };
+    Hermit::set_phase_variables(single_phase, 0, ctx);
+    EXPECT_EQ(ctx.get("prev_phase"), nullptr);
+    EXPECT_EQ(ctx.get("next_phase"), nullptr);
+}
+
 TEST(command_line, split_command_line_args)
 {
     const auto args{ Hermit::command_line::split_command_line_args("server.exe --model \"model name.gguf\" --flag") };
@@ -226,7 +265,9 @@ TEST(command_mode, string_conversion)
 
 TEST(string_utils, filename_and_language_helpers)
 {
-    EXPECT_EQ(Hermit::sanitize_as_filename("a:b/c*?"), "ab/c");
+    EXPECT_EQ(Hermit::sanitize_as_filename("a:b/c*?"), "abc");
+    EXPECT_EQ(Hermit::sanitize_as_filename("..\\..\\secret"), "....secret");
+    EXPECT_TRUE(Hermit::sanitize_as_filename("..").empty());
     EXPECT_EQ(Hermit::language_identifier_to_extension("cpp"), ".cpp");
     EXPECT_EQ(Hermit::language_identifier_to_extension("unknown-language"), "");
 }
@@ -248,6 +289,33 @@ TEST(string_utils, encoding_and_escaping)
     EXPECT_TRUE(Hermit::string_utils::is_base64(encoded, 4));
     EXPECT_EQ(Hermit::string_utils::json_escape_string("a\"b\n"), "a\\\"b\\n");
     EXPECT_EQ(Hermit::string_utils::unescape_string("a\\n"), "a\n");
+}
+
+TEST(png, validates_signature_and_bounds_chunk_lengths)
+{
+    std::string image{ "\x89PNG\r\n\x1A\n", 8 };
+    image.append("\0\0\0\x0D", 4);
+    image += "IHDR";
+    image.append(13, '\0');
+    image.append(4, '\0');
+
+    const std::string metadata{ "parameters\0prompt", 17 };
+    image.append("\0\0\0\x11", 4);
+    image += "tEXt";
+    image += metadata;
+    image.append(4, '\0');
+
+    const std::string& with_metadata{ image };
+    EXPECT_EQ(Hermit::tEXt::extract_parameters(with_metadata, "parameters"), "prompt");
+
+    std::string invalid_signature{ image };
+    invalid_signature[7] = '\0';
+    EXPECT_THROW(Hermit::tEXt::extract_parameters(invalid_signature, "parameters"), std::exception);
+
+    std::string oversized_chunk{ "\x89PNG\r\n\x1A\n", 8 };
+    oversized_chunk.append("\xFF\xFF\xFF\xFFtEXt", 8);
+    oversized_chunk.append(4, '\0');
+    EXPECT_THROW(Hermit::tEXt::extract_parameters(oversized_chunk, "parameters"), std::exception);
 }
 
 TEST(core, converts_all_public_backend_modes)

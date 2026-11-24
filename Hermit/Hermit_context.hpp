@@ -34,6 +34,7 @@ namespace Hermit
         context& operator=(context&&) = delete;
         context make_pushed() const;
         void set(std::string_view key, const value_type& value);
+        void erase(std::string_view key);
         const value_type* get(std::string_view key) const;
         value_type* get(std::string_view key);
     private:
