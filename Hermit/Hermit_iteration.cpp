@@ -262,6 +262,7 @@ namespace Hermit
 
             if (cfg.command_mode == command_mode::list_models || cfg.command_mode == command_mode::list_running_models
                 || cfg.command_mode == command_mode::get_ollama_version || cfg.command_mode == command_mode::manage_comfyui_api
+                || cfg.command_mode == command_mode::manage_sd_api
                 || cfg.command_mode == command_mode::show_model || cfg.command_mode == command_mode::manage_ollama_model
                 || cfg.command_mode == command_mode::create_embeddings
                 || cfg.command_mode == command_mode::tokenize || cfg.command_mode == command_mode::detokenize)
@@ -284,6 +285,7 @@ namespace Hermit
                     : cfg.command_mode == command_mode::show_model ? llm::show_model(cfg, executor)
                     : cfg.command_mode == command_mode::manage_ollama_model ? llm::manage_ollama_model(cfg, executor)
                     : cfg.command_mode == command_mode::manage_comfyui_api ? cu::manage_api(cfg, executor)
+                    : cfg.command_mode == command_mode::manage_sd_api ? sd::manage_api(cfg, executor)
                     : cfg.command_mode == command_mode::create_embeddings ? llm::create_embeddings(cfg, executor)
                     : cfg.command_mode == command_mode::tokenize ? llm::tokenize(cfg, executor) : llm::detokenize(cfg, executor) };
                 if (cfg.command_mode == command_mode::manage_comfyui_api && cu::api_returns_binary(cfg.cu))

@@ -288,7 +288,19 @@ TEST(cu, routes_queue_and_control_operations_with_json_contracts)
         { "models-folder", Hermit::public_api::http_method::get, "/models/checkpoints%2Fsecondary", "", "checkpoints/secondary", "", "", "" },
         { "embeddings", Hermit::public_api::http_method::get, "/embeddings", "", "", "", "", "" },
         { "extensions", Hermit::public_api::http_method::get, "/extensions", "", "", "", "", "" },
-        { "features", Hermit::public_api::http_method::get, "/features", "", "", "", "", "" }
+        { "features", Hermit::public_api::http_method::get, "/features", "", "", "", "", "" },
+        { "system-stats", Hermit::public_api::http_method::get, "/system_stats", "", "", "", "", "" },
+        { "default-workflow", Hermit::public_api::http_method::get, "/default_workflow", "", "", "", "", "" },
+        { "prompt-status", Hermit::public_api::http_method::get, "/prompt", "", "", "", "", "" },
+        { "workflow-templates", Hermit::public_api::http_method::get, "/workflow_templates", "", "", "", "", "" },
+        { "i18n", Hermit::public_api::http_method::get, "/i18n", "", "", "", "", "" },
+        { "web-ui", Hermit::public_api::http_method::get, "/", "", "", "", "", "" },
+        { "users", Hermit::public_api::http_method::get, "/users", "", "", "", "", "" },
+        { "user-create", Hermit::public_api::http_method::post, "/users", "", "", R"({"username":"Test User"})", R"({"username":"Test User"})", "" },
+        { "jobs", Hermit::public_api::http_method::get, "/api/jobs?limit=20&offset=4&sort_by=created_at&sort_order=desc&status=pending,failed&workflow_id=workflow+one", "", "", R"({"status":"pending,failed","workflow_id":"workflow one","sort_by":"created_at","sort_order":"desc","limit":20,"offset":4})", "", "" },
+        { "job", Hermit::public_api::http_method::get, "/api/jobs/job%2Fone", "", "", "", "", "job/one" },
+        { "job-cancel", Hermit::public_api::http_method::post, "/api/jobs/job%2Fone/cancel", "", "", "", "{}", "job/one" },
+        { "jobs-cancel", Hermit::public_api::http_method::post, "/api/jobs/cancel", "", "", R"({"job_ids":["job-1","job-2"]})", R"({"job_ids":["job-1","job-2"]})", "" }
     };
     for (const api_case& test_case : cases)
     {
@@ -369,6 +381,98 @@ TEST(cu, routes_view_and_model_metadata_queries)
     unsafe_cfg.cu.api_action = "view-metadata";
     unsafe_cfg.cu.api_metadata_folder = "../outside";
     unsafe_cfg.cu.api_options = R"({"filename":"model.safetensors"})";
+    bool request_sent{};
+    const Hermit::public_api::http_executor executor{ [&request_sent](const Hermit::public_api::http_request_data&)
+    {
+        request_sent = true;
+        return Hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    EXPECT_THROW(Hermit::cu::manage_api(unsafe_cfg, executor), Hermit::command_line_exception);
+    EXPECT_FALSE(request_sent);
+}
+
+TEST(cu, downloads_custom_node_template_files_with_segment_encoding_and_path_validation)
+{
+    Hermit::config cfg;
+    cfg.cu.api_action = "template-file";
+    cfg.cu.api_template_path = "Example Node/example_workflows/video demo.json";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/api/workflow_templates/Example%20Node/example_workflows/video%20demo.json");
+        return Hermit::public_api::http_response_data{ 200, R"({"workflow":{}})", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::cu::manage_api(cfg, executor), R"({"workflow":{}})");
+
+    cfg.cu.api_template_path = "Example Node/../secrets.json";
+    EXPECT_THROW(Hermit::cu::manage_api(cfg, executor), boost::exception);
+}
+
+TEST(cu, routes_userdata_api_with_binary_bodies_user_header_and_safe_paths)
+{
+    struct userdata_case
+    {
+        std::string action;
+        Hermit::public_api::http_method method;
+        std::string path;
+        std::string destination;
+        std::string options;
+        std::string expected_target;
+        std::string expected_body;
+        std::string response_body;
+        int status_code;
+    };
+    const std::string binary{ '\0', '\x01', static_cast<char>(0xFF) };
+    const std::vector<userdata_case> cases
+    {
+        { "userdata-list", Hermit::public_api::http_method::get, "", "", R"({"dir":"settings","recurse":"true","full_info":"true","split":"false"})",
+            "/userdata?dir=settings&full_info=true&recurse=true&split=false", "", "[]", 200 },
+        { "userdata-list-v2", Hermit::public_api::http_method::get, "", "", R"({"path":"folder one"})",
+            "/v2/userdata?path=folder+one", "", "[]", 200 },
+        { "userdata-get", Hermit::public_api::http_method::get, "nested/config.json", "", "",
+            "/userdata/nested%2Fconfig.json", "", binary, 200 },
+        { "userdata-put", Hermit::public_api::http_method::post, "nested/blob.bin", "", R"({"overwrite":false,"full_info":true})",
+            "/userdata/nested%2Fblob.bin?full_info=true&overwrite=false", binary, R"("nested/blob.bin")", 200 },
+        { "userdata-delete", Hermit::public_api::http_method::delete_, "nested/blob.bin", "", "",
+            "/userdata/nested%2Fblob.bin", "", "", 204 },
+        { "userdata-move", Hermit::public_api::http_method::post, "source/name.bin", "archive/name.bin", R"({"overwrite":false})",
+            "/userdata/source%2Fname.bin/move/archive%2Fname.bin?overwrite=false", "", R"("archive/name.bin")", 200 }
+    };
+    for (const userdata_case& test_case : cases)
+    {
+        Hermit::config cfg;
+        cfg.cu.host = "comfy-host";
+        cfg.cu.port = "8188";
+        cfg.cu.api_action = test_case.action;
+        cfg.cu.api_options = test_case.options;
+        cfg.cu.userdata_path = test_case.path;
+        cfg.cu.userdata_destination = test_case.destination;
+        cfg.cu.api_user_id = "example_user_123";
+        cfg.cu.upload_file = "local.bin";
+        const Hermit::filesystem::file_reader reader{ [&binary, &test_case](const std::filesystem::path&, std::ios_base::openmode mode)
+        {
+            EXPECT_TRUE((mode & std::ios_base::binary) != 0);
+            return binary;
+        } };
+        const Hermit::public_api::http_executor executor{ [&test_case, &binary](const Hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, test_case.method);
+            EXPECT_EQ(request.host, "comfy-host");
+            EXPECT_EQ(request.port, "8188");
+            EXPECT_EQ(request.target, test_case.expected_target);
+            EXPECT_EQ(request.body, test_case.expected_body);
+            EXPECT_EQ(request.headers.at("comfy-user"), "example_user_123");
+            if (test_case.action == "userdata-put") EXPECT_EQ(request.content_type, "application/octet-stream");
+            return Hermit::public_api::http_response_data{ test_case.status_code, test_case.response_body,
+                test_case.action == "userdata-get" ? "application/octet-stream" : "application/json" };
+        } };
+        EXPECT_EQ(Hermit::cu::manage_api(cfg, executor, reader), test_case.response_body) << test_case.action;
+        EXPECT_EQ(Hermit::cu::api_returns_binary(cfg.cu), test_case.action == "userdata-get") << test_case.action;
+    }
+
+    Hermit::config unsafe_cfg;
+    unsafe_cfg.cu.api_action = "userdata-get";
+    unsafe_cfg.cu.userdata_path = "nested/../secrets.json";
     bool request_sent{};
     const Hermit::public_api::http_executor executor{ [&request_sent](const Hermit::public_api::http_request_data&)
     {

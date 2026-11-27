@@ -45,7 +45,7 @@ namespace Hermit
 
     void tcp::ensure_success(const response_type& response)
     {
-        if (response.result() != boost::beast::http::status::ok)
+        if (response.result_int() < 200 || response.result_int() >= 300)
         {
             Hermit::throw_exception
             (

@@ -1,3 +1,8 @@
+#include <chrono>
+#include <stdexcept>
+#include <utility>
+#include <boost/url.hpp>
+
 #include "Hermit_generation.hpp"
 #include "Hermit_filesystem.hpp"
 #include "Hermit_tcp.hpp"
@@ -5,7 +10,6 @@
 #include "Hermit_errors.hpp"
 #include "Hermit_string_utils.hpp"
 #include "Hermit_public_http_adapter.hpp"
-#include <chrono>
 
 namespace Hermit
 {
@@ -267,6 +271,138 @@ namespace Hermit
             const std::string base64_image_data{ response_json.at("images").at(0).get<std::string>() };
             if (base64_image_data.empty()) Hermit::throw_exception(image_generation_exception{} << error_info::description{ "No image data found in the response" });
             return string_utils::base64_decode(base64_image_data);
+        }
+
+        std::string manage_api(const config& cfg, const public_api::http_executor& executor)
+        {
+            using public_api::http_method;
+            const std::string& action{ cfg.sd.api_action };
+            std::string target;
+            std::string body;
+            http_method method{ http_method::post };
+            if (action == "progress")
+            {
+                target = "/sdapi/v1/progress";
+                method = http_method::get;
+                if (!cfg.sd.api_options.empty())
+                {
+                    const nlohmann::json options{ nlohmann::json::parse(cfg.sd.api_options) };
+                    if (!options.is_object() || (options.size() > 1) || (options.contains("skip_current_image") && !options.at("skip_current_image").is_boolean()))
+                    {
+                        throw std::invalid_argument{ "sd progress options must be an object containing only boolean skip_current_image" };
+                    }
+                    if (options.contains("skip_current_image"))
+                    {
+                        boost::urls::url query;
+                        query.set_path(target);
+                        query.params().append({ "skip_current_image", options.at("skip_current_image").get<bool>() ? "true" : "false" });
+                        target = std::string{ query.encoded_target() };
+                    }
+                }
+            }
+            else if (action == "options")
+            {
+                target = "/sdapi/v1/options";
+                method = http_method::get;
+                if (!cfg.sd.api_options.empty())
+                {
+                    throw std::invalid_argument{ "sd-api options does not accept --sd.api-options" };
+                }
+            }
+            else if (action == "options-set")
+            {
+                target = "/sdapi/v1/options";
+                const nlohmann::json request_options{ nlohmann::json::parse(cfg.sd.api_options) };
+                if (!request_options.is_object() || request_options.empty())
+                {
+                    throw std::invalid_argument{ "sd-api options-set requires a non-empty JSON object in --sd.api-options" };
+                }
+                body = request_options.dump();
+            }
+            else if (action == "create-embedding" || action == "create-hypernetwork"
+                || action == "train-embedding" || action == "train-hypernetwork")
+            {
+                const nlohmann::json request_options{ nlohmann::json::parse(cfg.sd.api_options) };
+                if (!request_options.is_object() || request_options.empty())
+                {
+                    throw std::invalid_argument{ "sd-api " + action + " requires a non-empty JSON object in --sd.api-options" };
+                }
+                const bool is_create{ action.starts_with("create-") };
+                const std::string operation{ is_create ? "create/" : "train/" };
+                const std::string resource{ action.ends_with("embedding") ? "embedding" : "hypernetwork" };
+                target = "/sdapi/v1/" + operation + resource;
+                body = request_options.dump();
+            }
+            else if (action == "cmd-flags" || action == "samplers" || action == "schedulers" || action == "upscalers"
+                || action == "latent-upscale-modes" || action == "sd-models" || action == "sd-vae" || action == "hypernetworks"
+                || action == "face-restorers" || action == "realesrgan-models" || action == "prompt-styles" || action == "embeddings"
+                || action == "memory" || action == "scripts" || action == "script-info" || action == "extensions")
+            {
+                target = "/sdapi/v1/" + action;
+                method = http_method::get;
+                if (!cfg.sd.api_options.empty())
+                {
+                    throw std::invalid_argument{ "sd-api " + action + " does not accept --sd.api-options" };
+                }
+            }
+            else if (action == "refresh-embeddings" || action == "refresh-checkpoints" || action == "refresh-vae")
+            {
+                target = "/sdapi/v1/" + action;
+                if (!cfg.sd.api_options.empty())
+                {
+                    throw std::invalid_argument{ "sd-api " + action + " does not accept --sd.api-options" };
+                }
+            }
+            else if (action == "unload-checkpoint" || action == "reload-checkpoint")
+            {
+                target = "/sdapi/v1/" + action;
+                if (!cfg.sd.api_options.empty())
+                {
+                    throw std::invalid_argument{ "sd-api " + action + " does not accept --sd.api-options" };
+                }
+            }
+            else if (action == "interrogate")
+            {
+                target = "/sdapi/v1/interrogate";
+                const nlohmann::json options{ nlohmann::json::parse(cfg.sd.api_options) };
+                if (!options.is_object() || !options.contains("image") || !options.at("image").is_string()
+                    || options.at("image").get_ref<const std::string&>().empty() || !options.contains("model")
+                    || !options.at("model").is_string() || (options.at("model") != "clip" && options.at("model") != "deepdanbooru"))
+                {
+                    throw std::invalid_argument{ "sd interrogate requires --sd.api-options with image and model (clip or deepdanbooru)" };
+                }
+                body = options.dump();
+            }
+            else if (action == "extra-single-image" || action == "extra-batch-images" || action == "png-info")
+            {
+                const nlohmann::json request_options{ nlohmann::json::parse(cfg.sd.api_options) };
+                if (!request_options.is_object())
+                {
+                    throw std::invalid_argument{ "Stable Diffusion API options must be a JSON object" };
+                }
+                const std::string image_key{ action == "extra-batch-images" ? "imageList" : "image" };
+                if (!request_options.contains(image_key) || (action == "extra-batch-images"
+                    ? !request_options.at(image_key).is_array() : !request_options.at(image_key).is_string()))
+                {
+                    throw std::invalid_argument{ "Stable Diffusion API options require " + image_key };
+                }
+                target = action == "extra-single-image" ? "/sdapi/v1/extra-single-image"
+                    : action == "extra-batch-images" ? "/sdapi/v1/extra-batch-images" : "/sdapi/v1/png-info";
+                body = request_options.dump();
+            }
+            else if (action == "interrupt") target = "/sdapi/v1/interrupt";
+            else if (action == "skip") target = "/sdapi/v1/skip";
+            else throw std::invalid_argument{ "unsupported Stable Diffusion API action: " + action };
+
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.sd.host, cfg.sd.port, target, std::move(body), std::move(options)) };
+            request.method = method;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
         }
     } // namespace sd
 

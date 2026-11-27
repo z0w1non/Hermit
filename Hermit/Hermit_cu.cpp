@@ -27,6 +27,39 @@ namespace Hermit
 {
     namespace cu
     {
+        namespace
+        {
+            bool is_safe_userdata_path(std::string_view path, bool allow_empty = false)
+            {
+                if (path.empty()) return allow_empty;
+                if (path.front() == '/' || path.front() == '\\' || path.find('\\') != std::string_view::npos
+                    || path.find(':') != std::string_view::npos || path.find('%') != std::string_view::npos)
+                {
+                    return false;
+                }
+                std::size_t segment_start{};
+                while (segment_start <= path.size())
+                {
+                    const std::size_t separator{ path.find('/', segment_start) };
+                    const std::string_view segment{ path.substr(segment_start,
+                        separator == std::string_view::npos ? path.size() - segment_start : separator - segment_start) };
+                    if (segment.empty() || segment == "." || segment == "..") return false;
+                    if (separator == std::string_view::npos) break;
+                    segment_start = separator + 1;
+                }
+                return true;
+            }
+
+            bool is_safe_comfy_user_id(std::string_view user_id)
+            {
+                return !user_id.empty() && std::all_of(user_id.begin(), user_id.end(), [](unsigned char character)
+                {
+                    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
+                        || (character >= '0' && character <= '9') || character == '-' || character == '_';
+                });
+            }
+        }
+
         std::string make_websocket_target(const cu_parameters& cfg)
         {
             boost::urls::url url{};
@@ -316,6 +349,7 @@ namespace Hermit
         {
             public_api::http_method method{ public_api::http_method::post };
             std::string target;
+            std::string raw_body;
             nlohmann::json body{ nlohmann::json::object() };
             if (!cfg.cu.api_options.empty())
             {
@@ -327,7 +361,216 @@ namespace Hermit
                 }
             }
 
-            if (cfg.cu.api_action == "view" || cfg.cu.api_action == "view-metadata")
+            if (cfg.cu.api_action == "system-stats" || cfg.cu.api_action == "default-workflow"
+                || cfg.cu.api_action == "prompt-status" || cfg.cu.api_action == "workflow-templates"
+                || cfg.cu.api_action == "i18n" || cfg.cu.api_action == "web-ui")
+            {
+                if (!cfg.cu.api_options.empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy system-stats and default-workflow do not accept --cu.api-options" });
+                }
+                method = public_api::http_method::get;
+                if (cfg.cu.api_action == "system-stats") target = "/system_stats";
+                else if (cfg.cu.api_action == "default-workflow") target = "/default_workflow";
+                else if (cfg.cu.api_action == "prompt-status") target = "/prompt";
+                else if (cfg.cu.api_action == "workflow-templates") target = "/workflow_templates";
+                else if (cfg.cu.api_action == "i18n") target = "/i18n";
+                else target = "/";
+            }
+            else if (cfg.cu.api_action == "template-file")
+            {
+                const std::string_view path{ cfg.cu.api_template_path };
+                const std::size_t separator{ path.find('/') };
+                if (!is_safe_userdata_path(path) || separator == std::string_view::npos || separator + 1 >= path.size())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy template-file requires --cu.template-path module/relative-file without traversal" });
+                }
+                boost::urls::url url{};
+                url.set_path("/");
+                url.segments().push_back("api");
+                url.segments().push_back("workflow_templates");
+                std::size_t segment_start{};
+                while (segment_start < path.size())
+                {
+                    const std::size_t segment_end{ path.find('/', segment_start) };
+                    url.segments().push_back(path.substr(segment_start,
+                        segment_end == std::string_view::npos ? path.size() - segment_start : segment_end - segment_start));
+                    if (segment_end == std::string_view::npos) break;
+                    segment_start = segment_end + 1;
+                }
+                method = public_api::http_method::get;
+                target = url.encoded_path();
+            }
+            else if (cfg.cu.api_action == "users")
+            {
+                if (!body.empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy users does not accept --cu.api-options" });
+                }
+                method = public_api::http_method::get;
+                target = "/users";
+            }
+            else if (cfg.cu.api_action == "user-create")
+            {
+                if (!body.contains("username") || body.size() != 1 || !body.at("username").is_string()
+                    || body.at("username").get<std::string>().empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy user-create requires --cu.api-options username as a non-empty string" });
+                }
+                target = "/users";
+            }
+            else if (cfg.cu.api_action == "userdata-list" || cfg.cu.api_action == "userdata-list-v2")
+            {
+                boost::urls::url url{};
+                const bool legacy{ cfg.cu.api_action == "userdata-list" };
+                url.set_path(legacy ? "/userdata" : "/v2/userdata");
+                const std::vector<std::string> allowed_fields{ "dir", "recurse", "full_info", "split", "path" };
+                url_params_setter params{ url };
+                for (const auto& [key, value] : body.items())
+                {
+                    const bool is_path{ legacy ? key == "dir" : key == "path" };
+                    if ((legacy ? key == "path" : key != "path")
+                        || std::find(allowed_fields.begin(), allowed_fields.end(), key) == allowed_fields.end()
+                        || (is_path ? !value.is_string() : (!value.is_string() && !value.is_boolean())))
+                    {
+                        Hermit::throw_exception(command_line_exception{} << error_info::description{
+                            "comfy userdata listing requires string dir/path and string or boolean recurse/full_info/split fields" });
+                    }
+                    if (value.is_string()) params(key, value.get<std::string>());
+                    else params(key, value.get<bool>());
+                }
+                if (legacy && (!body.contains("dir") || body.at("dir").get<std::string>().empty()))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy userdata-list requires --cu.api-options dir" });
+                }
+                if (body.contains(legacy ? "dir" : "path")
+                    && !is_safe_userdata_path(body.at(legacy ? "dir" : "path").get<std::string>(), !legacy))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "ComfyUI userdata paths must be relative slash-separated paths without traversal" });
+                }
+                method = public_api::http_method::get;
+                target = url.encoded_target();
+            }
+            else if (cfg.cu.api_action == "userdata-get" || cfg.cu.api_action == "userdata-put"
+                || cfg.cu.api_action == "userdata-delete" || cfg.cu.api_action == "userdata-move")
+            {
+                const bool move{ cfg.cu.api_action == "userdata-move" };
+                if (!is_safe_userdata_path(cfg.cu.userdata_path))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "ComfyUI userdata operations require a relative --cu.userdata-path without traversal" });
+                }
+                if (move && !is_safe_userdata_path(cfg.cu.userdata_destination))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy userdata-move requires a safe relative --cu.userdata-destination" });
+                }
+                const bool query_supported{ cfg.cu.api_action == "userdata-put" || move };
+                const std::vector<std::string> allowed_fields{ "full_info", "overwrite" };
+                for (const auto& [key, value] : body.items())
+                {
+                    if (!query_supported || std::find(allowed_fields.begin(), allowed_fields.end(), key) == allowed_fields.end()
+                        || (!value.is_string() && !value.is_boolean()))
+                    {
+                        Hermit::throw_exception(command_line_exception{} << error_info::description{
+                            "ComfyUI userdata file options accept only string/boolean full_info and overwrite fields on put/move" });
+                    }
+                }
+                boost::urls::url url{};
+                url.set_path("/");
+                url.segments().push_back("userdata");
+                url.segments().push_back(cfg.cu.userdata_path);
+                if (move)
+                {
+                    url.segments().push_back("move");
+                    url.segments().push_back(cfg.cu.userdata_destination);
+                }
+                url_params_setter params{ url };
+                for (const auto& [key, value] : body.items())
+                {
+                    if (value.is_string()) params(key, value.get<std::string>());
+                    else params(key, value.get<bool>());
+                }
+                target = url.encoded_target();
+                if (cfg.cu.api_action == "userdata-get") method = public_api::http_method::get;
+                else if (cfg.cu.api_action == "userdata-delete") method = public_api::http_method::delete_;
+                else
+                {
+                    method = public_api::http_method::post;
+                    if (cfg.cu.api_action == "userdata-put")
+                    {
+                        if (cfg.cu.upload_file.empty() || !reader)
+                        {
+                            Hermit::throw_exception(command_line_exception{} << error_info::description{
+                                "comfy userdata-put requires --cu.upload-file" });
+                        }
+                        raw_body = filesystem::read_binary_file_to_string(cfg.cu.upload_file, cfg, reader);
+                    }
+                }
+            }
+            else if (cfg.cu.api_action == "jobs")
+            {
+                static const std::vector<std::string> allowed_fields{ "status", "workflow_id", "sort_by", "sort_order", "limit", "offset" };
+                boost::urls::url url{};
+                url.set_path("/api/jobs");
+                url_params_setter params{ url };
+                for (const auto& [key, value] : body.items())
+                {
+                    if (std::find(allowed_fields.begin(), allowed_fields.end(), key) == allowed_fields.end()
+                        || ((key == "limit" || key == "offset") ? !value.is_number_integer() : !value.is_string()))
+                    {
+                        Hermit::throw_exception(command_line_exception{} << error_info::description{
+                            "comfy jobs accepts status/workflow_id/sort_by/sort_order strings and integer limit/offset fields" });
+                    }
+                    if (value.is_string()) params(key, value.get<std::string>());
+                    else params(key, value.get<std::int64_t>());
+                }
+                method = public_api::http_method::get;
+                target = url.encoded_target();
+            }
+            else if (cfg.cu.api_action == "job" || cfg.cu.api_action == "job-cancel")
+            {
+                if (cfg.cu.api_prompt_id.empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy job operations require --cu.prompt-id" });
+                }
+                if (!body.empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy job operations do not accept --cu.api-options" });
+                }
+                boost::urls::url url{};
+                url.set_path("/");
+                url.segments().push_back("api");
+                url.segments().push_back("jobs");
+                url.segments().push_back(cfg.cu.api_prompt_id);
+                if (cfg.cu.api_action == "job-cancel")
+                {
+                    url.segments().push_back("cancel");
+                    method = public_api::http_method::post;
+                }
+                else method = public_api::http_method::get;
+                target = url.encoded_path();
+            }
+            else if (cfg.cu.api_action == "jobs-cancel")
+            {
+                if (!body.contains("job_ids") || body.size() != 1 || !body.at("job_ids").is_array()
+                    || std::any_of(body.at("job_ids").begin(), body.at("job_ids").end(), [](const nlohmann::json& id)
+                        { return !id.is_string() || id.get<std::string>().empty(); }))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "comfy jobs-cancel requires --cu.api-options job_ids as an array of non-empty IDs" });
+                }
+                target = "/api/jobs/cancel";
+            }
+            else if (cfg.cu.api_action == "view" || cfg.cu.api_action == "view-metadata")
             {
                 const bool metadata{ cfg.cu.api_action == "view-metadata" };
                 const std::vector<std::string> allowed_fields{ "filename", "type", "subfolder", "preview", "channel" };
@@ -566,8 +809,21 @@ namespace Hermit
             options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
             options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
             public_api::http_request_data request{ public_api::make_http_request_data(
-                cfg.cu.host, cfg.cu.port, target, method == public_api::http_method::get ? "" : body.dump(), std::move(options)) };
+                cfg.cu.host, cfg.cu.port, target,
+                method == public_api::http_method::get || method == public_api::http_method::delete_
+                    || cfg.cu.api_action == "userdata-move" ? ""
+                    : cfg.cu.api_action == "userdata-put" ? std::move(raw_body) : body.dump(), std::move(options)) };
             request.method = method;
+            if (!cfg.cu.api_user_id.empty())
+            {
+                if (!is_safe_comfy_user_id(cfg.cu.api_user_id))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "--cu.user-id must contain only letters, digits, hyphens, and underscores" });
+                }
+                request.headers.emplace("comfy-user", cfg.cu.api_user_id);
+            }
+            if (cfg.cu.api_action == "userdata-put") request.content_type = "application/octet-stream";
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
             return response.body;
@@ -575,7 +831,7 @@ namespace Hermit
 
         bool api_returns_binary(const cu_parameters& parameters)
         {
-            return parameters.api_action == "view";
+            return parameters.api_action == "view" || parameters.api_action == "userdata-get";
         }
 
         void send_request(const config& cfg, std::string_view prompt)

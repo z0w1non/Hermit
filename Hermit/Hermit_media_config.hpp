@@ -36,7 +36,7 @@ namespace Hermit
     struct cu_parameters
     {
         std::string host, port, prompt_target, upload_image_target;
-        std::string api_action, api_options, api_prompt_id, api_node_class, api_model_folder, api_metadata_folder, client_id;
+        std::string api_action, api_options, api_prompt_id, api_node_class, api_model_folder, api_metadata_folder, api_user_id, userdata_path, userdata_destination, api_template_path, client_id;
         int event_count{};
         std::string prompt, prompt_file, output_directory, upload_file;
         std::vector<std::string> upload_images;

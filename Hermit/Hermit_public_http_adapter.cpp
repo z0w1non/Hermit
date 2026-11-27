@@ -10,7 +10,7 @@ namespace Hermit::public_api
 {
     void ensure_success(const http_response_data& response)
     {
-        if (response.status_code != static_cast<int>(boost::beast::http::status::ok))
+        if (response.status_code < 200 || response.status_code >= 300)
         {
             Hermit::throw_exception
             (
@@ -59,6 +59,10 @@ namespace Hermit::public_api
             {
                 request.set(boost::beast::http::field::authorization, *data.options.authorization);
             }
+            for (const auto& [name, value] : data.headers)
+            {
+                request.set(name, value);
+            }
             const tcp::response_type response{ executor(data.host, data.port, request) };
             tcp::ensure_success(response);
             http_response_data result;
@@ -85,6 +89,10 @@ namespace Hermit::public_api
             data.method = request.method() == boost::beast::http::verb::get ? http_method::get
                 : request.method() == boost::beast::http::verb::delete_ ? http_method::delete_ : http_method::post;
             data.content_type = std::string{ request[boost::beast::http::field::content_type] };
+            for (const auto& field : request)
+            {
+                data.headers.emplace(std::string{ field.name_string() }, std::string{ field.value() });
+            }
             const http_response_data result{ executor(data) };
             ensure_success(result);
             const unsigned body_size{ static_cast<unsigned>(std::min<std::size_t>(result.body.size(), static_cast<std::size_t>(std::numeric_limits<unsigned>::max()))) };

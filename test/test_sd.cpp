@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include <filesystem>
+#include <tuple>
+#include <vector>
 
 #include "Hermit_config.hpp"
 #include "Hermit_errors.hpp"
@@ -96,6 +98,113 @@ TEST(sd, rejects_non_success_status_from_injected_executors)
 
     EXPECT_THROW(Hermit::sd::send_request(cfg, "prompt", "negative", tcp_executor), Hermit::http_status_exception);
     EXPECT_THROW(Hermit::sd::send_request(cfg, "prompt", "negative", http_executor), Hermit::http_status_exception);
+}
+
+TEST(sd, manages_progress_interrogate_and_control_api_contracts)
+{
+    Hermit::config cfg;
+    cfg.sd.host = "sd-host";
+    cfg.sd.port = "7860";
+    const std::vector<std::tuple<std::string, std::string, Hermit::public_api::http_method, std::string, std::string>> cases
+    {
+        { "options", "", Hermit::public_api::http_method::get, "/sdapi/v1/options", "" },
+        { "options-set", R"({"samples_save":false})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/options", R"({"samples_save":false})" },
+        { "create-embedding", R"({"opaque":"pass-through"})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/create/embedding", R"({"opaque":"pass-through"})" },
+        { "create-hypernetwork", R"({"opaque":"pass-through"})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/create/hypernetwork", R"({"opaque":"pass-through"})" },
+        { "train-embedding", R"({"opaque":"pass-through"})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/train/embedding", R"({"opaque":"pass-through"})" },
+        { "train-hypernetwork", R"({"opaque":"pass-through"})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/train/hypernetwork", R"({"opaque":"pass-through"})" },
+        { "memory", "", Hermit::public_api::http_method::get, "/sdapi/v1/memory", "" },
+        { "scripts", "", Hermit::public_api::http_method::get, "/sdapi/v1/scripts", "" },
+        { "script-info", "", Hermit::public_api::http_method::get, "/sdapi/v1/script-info", "" },
+        { "extensions", "", Hermit::public_api::http_method::get, "/sdapi/v1/extensions", "" },
+        { "unload-checkpoint", "", Hermit::public_api::http_method::post, "/sdapi/v1/unload-checkpoint", "" },
+        { "reload-checkpoint", "", Hermit::public_api::http_method::post, "/sdapi/v1/reload-checkpoint", "" },
+        { "cmd-flags", "", Hermit::public_api::http_method::get, "/sdapi/v1/cmd-flags", "" },
+        { "samplers", "", Hermit::public_api::http_method::get, "/sdapi/v1/samplers", "" },
+        { "schedulers", "", Hermit::public_api::http_method::get, "/sdapi/v1/schedulers", "" },
+        { "upscalers", "", Hermit::public_api::http_method::get, "/sdapi/v1/upscalers", "" },
+        { "latent-upscale-modes", "", Hermit::public_api::http_method::get, "/sdapi/v1/latent-upscale-modes", "" },
+        { "sd-models", "", Hermit::public_api::http_method::get, "/sdapi/v1/sd-models", "" },
+        { "sd-vae", "", Hermit::public_api::http_method::get, "/sdapi/v1/sd-vae", "" },
+        { "hypernetworks", "", Hermit::public_api::http_method::get, "/sdapi/v1/hypernetworks", "" },
+        { "face-restorers", "", Hermit::public_api::http_method::get, "/sdapi/v1/face-restorers", "" },
+        { "realesrgan-models", "", Hermit::public_api::http_method::get, "/sdapi/v1/realesrgan-models", "" },
+        { "prompt-styles", "", Hermit::public_api::http_method::get, "/sdapi/v1/prompt-styles", "" },
+        { "embeddings", "", Hermit::public_api::http_method::get, "/sdapi/v1/embeddings", "" },
+        { "refresh-embeddings", "", Hermit::public_api::http_method::post, "/sdapi/v1/refresh-embeddings", "" },
+        { "refresh-checkpoints", "", Hermit::public_api::http_method::post, "/sdapi/v1/refresh-checkpoints", "" },
+        { "refresh-vae", "", Hermit::public_api::http_method::post, "/sdapi/v1/refresh-vae", "" },
+        { "progress", R"({"skip_current_image":true})", Hermit::public_api::http_method::get,
+            "/sdapi/v1/progress?skip_current_image=true", "" },
+        { "interrupt", "", Hermit::public_api::http_method::post, "/sdapi/v1/interrupt", "" },
+        { "skip", "", Hermit::public_api::http_method::post, "/sdapi/v1/skip", "" },
+        { "interrogate", R"({"image":"aW1hZ2U=","model":"clip"})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/interrogate", R"({"image":"aW1hZ2U=","model":"clip"})" },
+        { "extra-single-image", R"({"image":"aW1hZ2U=","upscaling_resize":2})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/extra-single-image", R"({"image":"aW1hZ2U=","upscaling_resize":2})" },
+        { "extra-batch-images", R"({"imageList":[{"data":"aW1hZ2U=","name":"input.png"}]})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/extra-batch-images", R"({"imageList":[{"data":"aW1hZ2U=","name":"input.png"}]})" },
+        { "png-info", R"({"image":"aW1hZ2U="})", Hermit::public_api::http_method::post,
+            "/sdapi/v1/png-info", R"({"image":"aW1hZ2U="})" }
+    };
+    for (const auto& [action, options, method, target, body] : cases)
+    {
+        cfg.sd.api_action = action;
+        cfg.sd.api_options = options;
+        const Hermit::public_api::http_executor executor{ [&](const Hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.host, "sd-host");
+            EXPECT_EQ(request.port, "7860");
+            EXPECT_EQ(request.method, method);
+            EXPECT_EQ(request.target, target);
+            EXPECT_EQ(request.body, body);
+            return Hermit::public_api::http_response_data{ 200, R"({"ok":true})" };
+        } };
+        EXPECT_EQ(Hermit::sd::manage_api(cfg, executor), R"({"ok":true})") << action;
+    }
+}
+
+TEST(sd, rejects_invalid_api_action_options_and_http_status)
+{
+    Hermit::config cfg;
+    cfg.sd.api_action = "interrogate";
+    cfg.sd.api_options = R"({"image":"abc","model":"unknown"})";
+    const Hermit::public_api::http_executor success_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_action = "progress";
+    cfg.sd.api_options = R"({"skip_current_image":"yes"})";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_action = "interrupt";
+    cfg.sd.api_options.clear();
+    const Hermit::public_api::http_executor failing_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 500, "error" };
+    } };
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, failing_executor), Hermit::http_status_exception);
+    cfg.sd.api_action = "extra-batch-images";
+    cfg.sd.api_options = R"({"image":"not-an-array"})";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_action = "options-set";
+    cfg.sd.api_options = "[]";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_action = "refresh-checkpoints";
+    cfg.sd.api_options = R"({"force":true})";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_action = "unload-checkpoint";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_action = "train-embedding";
+    cfg.sd.api_options = "{}";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_options = "[]";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
 }
 
 TEST(sd, builds_img2img_request_with_init_images_and_masks)

@@ -101,6 +101,37 @@ TEST(public_api, adapts_delete_http_method_with_json_body)
     EXPECT_EQ(executor(request).body, "deleted");
 }
 
+TEST(public_api, adapts_custom_headers_and_accepts_no_content_success)
+{
+    const Hermit::public_api::http_executor executor{ Hermit::public_api::make_http_executor(
+        [](std::string_view, std::string_view, const Hermit::tcp::request_type& request)
+        {
+            EXPECT_EQ(request["comfy-user"], "user_123");
+            Hermit::tcp::response_type response;
+            response.result(boost::beast::http::status::no_content);
+            return response;
+        }) };
+    Hermit::public_api::http_request_data request;
+    request.method = Hermit::public_api::http_method::delete_;
+    request.headers.emplace("comfy-user", "user_123");
+    EXPECT_EQ(executor(request).status_code, 204);
+}
+
+TEST(public_api, adapts_custom_headers_from_tcp_request)
+{
+    bool header_forwarded{};
+    const Hermit::tcp::request_executor executor{ Hermit::public_api::make_tcp_executor(
+        [&header_forwarded](const Hermit::public_api::http_request_data& request)
+    {
+        header_forwarded = request.headers.at("comfy-user") == "user_123";
+        return Hermit::public_api::http_response_data{ 200, "{}", "application/json" };
+    }) };
+    Hermit::tcp::request_type request{ Hermit::tcp::make_get_json_request("host", "/users") };
+    request.set("comfy-user", "user_123");
+    static_cast<void>(executor("host", "8188", request));
+    EXPECT_TRUE(header_forwarded);
+}
+
 TEST(public_api, marks_binary_download_responses)
 {
     const Hermit::public_api::http_executor executor{ Hermit::public_api::make_http_executor(

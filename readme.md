@@ -8,6 +8,7 @@ Hermit は、Windows 上で動作する C++20 の CLI アプリケーション�
 
 - `tg` / `kc`、OpenAI 互換 API を持つ `lmstudio` / `llama-cpp` / `vllm`、Ollama 独自 API の `ollama` でテキストを生成し、Completions または Chat Completions の処理を選択できます。
 - `sd` モードで Stable Diffusion WebUI に txt2img / img2img リクエストを送り、画像を保存できます。
+- `sd-api` コマンドで Stable Diffusion WebUI の進捗、画像 interrogate、中断、skip API を呼び出せます。
 - `sb` モードで Style-Bert-VITS2 に音声生成リクエストを送り、音声を保存できます。
 - `cu` モードで ComfyUI の workflow を送信し、画像をアップロードして生成結果を保存できます。
 - `{{...}}` 形式の式をプロンプトや対応するファイルパスで評価できます。ファイル読み込み、テキスト切り詰め、日時、乱数、環境変数、サブプロンプトなどの組み込み機能を利用できます。
@@ -189,6 +190,38 @@ Hermit.exe tokenize decode --backend llama-cpp --llm.token-ids 123 456
 
 ### AUTOMATIC1111 Stable Diffusion WebUI (`sd`)
 
+生成のほかに、progress・interrogate・interrupt・skip・Extras upscaling・PNG 情報・options API・model/sampler/extension 一覧・refresh API・embedding/hypernetwork の作成と学習 API・memory/script 情報・checkpoint の unload/reload API を呼び出せます。画像データは Base64 で `--sd.api-options` の JSON object に渡します。`interrogate` の model は `clip` または `deepdanbooru` です。`options` は設定を取得し、`options-set` は JSON object で設定を更新します。`create-embedding`、`create-hypernetwork`、`train-embedding`、`train-hypernetwork` は非空 JSON object をそのまま各 API へ転送します。request field は WebUI の版や設定で変わるため、使用中サーバーに対応する値を指定してください。`cmd-flags`、`samplers`、`schedulers`、`upscalers`、`latent-upscale-modes`、`sd-models`、`sd-vae`、`hypernetworks`、`face-restorers`、`realesrgan-models`、`prompt-styles`、`embeddings` はサーバーが提供する一覧 JSON を出力します。`refresh-embeddings`、`refresh-checkpoints`、`refresh-vae` は各モデル一覧を再読込します。`memory` は RAM/VRAM 使用量を、`scripts` と `script-info` は script 名と API metadata を、`extensions` は extension metadata を返します。`unload-checkpoint` は現在の model weights を解放し、`reload-checkpoint` は現在の model を device へ戻します。
+
+```powershell
+Hermit.exe sd-api progress --sd.api-options '{"skip_current_image":true}'
+Hermit.exe sd-api interrogate --sd.api-options '{"image":"<base64>","model":"clip"}'
+Hermit.exe sd-api interrupt
+Hermit.exe sd-api skip
+Hermit.exe sd-api extra-single-image --sd.api-options '{"image":"<base64>","upscaler_1":"R-ESRGAN 4x+","upscaling_resize":2}'
+Hermit.exe sd-api extra-batch-images --sd.api-options '{"imageList":[{"name":"input.png","data":"<base64>"}],"upscaling_resize":2}'
+Hermit.exe sd-api png-info --sd.api-options '{"image":"<base64-png>"}'
+Hermit.exe sd-api options
+Hermit.exe sd-api options-set --sd.api-options '{"samples_save":false}'
+Hermit.exe sd-api create-embedding --sd.api-options '{"<server-specific fields>":"<value>"}'
+Hermit.exe sd-api create-hypernetwork --sd.api-options '{"<server-specific fields>":"<value>"}'
+Hermit.exe sd-api train-embedding --sd.api-options '{"<server-specific fields>":"<value>"}'
+Hermit.exe sd-api train-hypernetwork --sd.api-options '{"<server-specific fields>":"<value>"}'
+Hermit.exe sd-api samplers
+Hermit.exe sd-api sd-models
+Hermit.exe sd-api embeddings
+Hermit.exe sd-api refresh-embeddings
+Hermit.exe sd-api refresh-checkpoints
+Hermit.exe sd-api refresh-vae
+Hermit.exe sd-api memory
+Hermit.exe sd-api scripts
+Hermit.exe sd-api script-info
+Hermit.exe sd-api extensions
+Hermit.exe sd-api unload-checkpoint
+Hermit.exe sd-api reload-checkpoint
+```
+
+API 操作は [バックエンド API 対応表](docs/BACKEND_WEB_API_COVERAGE.md) に記録しています。
+
 WebUI 起動引数で API を有効にします。ポートは WebUI の設定に合わせてください。
 
 ```powershell
@@ -221,7 +254,7 @@ Hermit.exe generate --backend cu --cu.prompt-file workflow.json --cu.upload-imag
 
 ComfyUI が返す生成ファイルは `--cu.output-directory` に保存されます。`--cu.preserve-subdirectories` を有効にするとサーバー側のサブディレクトリ構成を保ちます。
 
-ComfyUI の queue・history・node schema・model type・model list・embedding・extension・feature の取得、画像・mask アップロード、画像・モデル metadata の取得、queue 操作・実行割り込み・モデル解放 API は `comfy` コマンドで呼び出せます。query は `--cu.api-options` に JSON object で渡します。
+ComfyUI の queue・history・job・node schema・model type・model list・embedding・extension・feature の取得、画像・mask アップロード、画像・モデル metadata の取得、queue 操作・job 取消・実行割り込み・モデル解放 API は `comfy` コマンドで呼び出せます。query は `--cu.api-options` に JSON object で渡します。
 
 ```powershell
 Hermit.exe comfy queue
@@ -245,9 +278,30 @@ Hermit.exe comfy upload-image --cu.upload-file images/input.png --cu.api-options
 Hermit.exe comfy upload-mask --cu.upload-file images/mask.png --cu.api-options '{"original_ref":{"filename":"input.png","type":"input","subfolder":"references"},"type":"input","subfolder":"masks"}'
 Hermit.exe comfy view --cu.api-options '{"filename":"image.png","type":"output","subfolder":""}' > image.png
 Hermit.exe comfy view-metadata --cu.metadata-folder checkpoints --cu.api-options '{"filename":"model.safetensors"}'
+Hermit.exe comfy system-stats
+Hermit.exe comfy default-workflow
+Hermit.exe comfy prompt-status
+Hermit.exe comfy workflow-templates
+Hermit.exe comfy template-file --cu.template-path "ExampleNode/example_workflows/sample.json" > sample.json
+Hermit.exe comfy i18n
+Hermit.exe comfy web-ui
+Hermit.exe comfy users
+Hermit.exe comfy user-create --cu.api-options '{"username":"Example User"}'
+Hermit.exe comfy userdata-list --cu.api-options '{"dir":"settings","recurse":"true","full_info":"true"}'
+Hermit.exe comfy userdata-list-v2 --cu.api-options '{"path":"settings"}'
+Hermit.exe comfy userdata-get --cu.userdata-path settings/config.json --cu.user-id example_user_id > config.json
+Hermit.exe comfy userdata-put --cu.userdata-path settings/config.json --cu.upload-file config.json --cu.api-options '{"overwrite":true,"full_info":true}'
+Hermit.exe comfy userdata-move --cu.userdata-path settings/config.json --cu.userdata-destination archive/config.json --cu.api-options '{"overwrite":false}'
+Hermit.exe comfy userdata-delete --cu.userdata-path archive/config.json
+Hermit.exe comfy jobs --cu.api-options '{"status":"pending,in_progress","sort_by":"created_at","sort_order":"desc","limit":50,"offset":0}'
+Hermit.exe comfy job --cu.prompt-id "job-uuid"
+Hermit.exe comfy job-cancel --cu.prompt-id "job-uuid"
+Hermit.exe comfy jobs-cancel --cu.api-options '{"job_ids":["job-uuid-1","job-uuid-2"]}'
 ```
 
-`comfy models`、`comfy models-folder`、`comfy embeddings`、`comfy extensions`、`comfy features` は各一覧・機能 API を呼び出します。`comfy upload-image` は画像をアップロードし、`comfy upload-mask` は `original_ref` が示す画像の alpha mask をアップロードします。両操作の multipart 追加項目は `--cu.api-options` の JSON object で指定します。`comfy view` は filename/type/subfolder/preview/channel query に応じた画像 bytes を標準出力へ書き出すため、ファイル保存時はリダイレクトを使います。`comfy view-metadata` は `--cu.metadata-folder` と filename を使って safetensors metadata JSON を取得します。`--cu.model-folder` は `comfy models-folder` の取得先を指定します。`comfy object-info` は全 node schema を取得し、`--cu.node-class` を指定すると `/object_info/{node_class}` の schema を取得します。`comfy events` は WebSocket の text frame を JSON のまま出力し、binary frame は `{"type":"binary","data":"<base64>"}` 形式で出力します。`--cu.event-count` の既定値 0 は接続を継続して受信します。
+`comfy users` は `/users` の保存方式・ユーザー情報を取得し、`comfy user-create` は `--cu.api-options` の `username` でユーザーを作成します。GET 応答は ComfyUI の multi-user 設定により異なります。`comfy userdata-list` は legacy file listing、`comfy userdata-list-v2` は file/directory listing を取得します。`comfy userdata-get` は指定ファイルを binary で標準出力へ書き出すため、保存する場合は redirect を使います。`comfy userdata-put` は `--cu.upload-file` の raw bytes を送信し、move/delete はそれぞれ remote path を変更・削除します。`--cu.user-id` を指定すると `comfy-user` header を付けます。remote path は相対 slash 区切りで指定し、traversal は拒否されます。`comfy jobs` は `status`、`workflow_id`、`sort_by`、`sort_order`、`limit`、`offset` で job 一覧を絞り込みます。`comfy job` は `--cu.prompt-id` の job 詳細を取得し、`comfy job-cancel` は実行中または待機中の job を取り消します。`comfy jobs-cancel` は `job_ids` 配列を使って複数 job を取り消します。`comfy models`、`comfy models-folder`、`comfy embeddings`、`comfy extensions`、`comfy features` は各一覧・機能 API を呼び出します。`comfy system-stats` はサーバー・device 状態を、`comfy default-workflow` は既定 workflow JSON を取得します。`comfy upload-image` は画像をアップロードし、`comfy upload-mask` は `original_ref` が示す画像の alpha mask をアップロードします。両操作の multipart 追加項目は `--cu.api-options` の JSON object で指定します。`comfy view` は filename/type/subfolder/preview/channel query に応じた画像 bytes を標準出力へ書き出すため、ファイル保存時はリダイレクトを使います。`comfy view-metadata` は `--cu.metadata-folder` と filename を使って safetensors metadata JSON を取得します。`--cu.model-folder` は `comfy models-folder` の取得先を指定します。`comfy object-info` は全 node schema を取得し、`--cu.node-class` を指定すると `/object_info/{node_class}` の schema を取得します。`comfy events` は WebSocket の text frame を JSON のまま出力し、binary frame は `{"type":"binary","data":"<base64>"}` 形式で出力します。`--cu.event-count` の既定値 0 は接続を継続して受信します。
+
+`comfy prompt-status` は ComfyUI の `GET /prompt` から現在の queue status を取得します。`comfy workflow-templates` と `comfy i18n` は `/workflow_templates` と `/i18n` の JSON を取得します。`comfy template-file` は `--cu.template-path` の `module/relative-file` を `/api/workflow_templates/{module}/...` から取得します。`comfy web-ui` は `/` の HTML を標準出力へ書き出します。
 
 ## プロンプト、反復、マクロ
 

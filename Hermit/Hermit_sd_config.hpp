@@ -194,6 +194,8 @@ namespace Hermit
     {
         std::string host;
         std::string port;
+        std::string api_action;
+        std::string api_options;
 
         std::string prompt_file;
         std::string negative_prompt_file;

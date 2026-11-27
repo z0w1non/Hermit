@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <chrono>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -30,6 +31,7 @@ namespace Hermit::public_api
         std::string content_type;
         http_method method{ http_method::post };
         http_transport_options options;
+        std::map<std::string, std::string> headers;
     };
 
     struct http_response_data

@@ -52,20 +52,20 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/Hermit_types.hpp` | 共通型ヘッダー。例外、値型、コンテキストを束ねる安定した入口。 |
 | `Hermit/Hermit_aux_config.hpp` | PNG パラメーターとサーバープロセス設定型。 |
 | `Hermit/Hermit_llm_config.hpp` | LLM 接続先、backend 名、生成、モデル一覧・embeddings API path、会話、推論設定。 |
-| `Hermit/Hermit_media_config.hpp` | Style-Bert-VITS2 と ComfyUI の設定型。filesystem の `file_reader` を利用した画像読込注入境界と、ComfyUI API action・upload file・metadata folder・node class・WebSocket 接続設定を宣言する。 |
-| `Hermit/Hermit_sd_config.hpp` | Stable Diffusion のモード・共通・txt2img・img2img 設定型。img2img 専用 seed resize 値は `-1` を既定値とし、未指定時は共通値を使う。 |
+| `Hermit/Hermit_media_config.hpp` | Style-Bert-VITS2 と ComfyUI の設定型。filesystem の `file_reader` を利用した画像／userdata file 読込注入境界と、ComfyUI API action・upload file・userdata path/user ID・metadata folder・node class・WebSocket 接続設定を宣言する。 |
+| `Hermit/Hermit_sd_config.hpp` | Stable Diffusion のモード・共通・txt2img・img2img 設定型と API action/options。img2img 専用 seed resize 値は `-1` を既定値とし、未指定時は共通値を使う。 |
 | `Hermit/Hermit_tg_kc_config.hpp` | text-generation-webui、KoboldCpp、OpenAI 互換 LLM server、Ollama native API の設定型・要求応答 adapter。 |
 | `Hermit/Hermit_config.hpp` | 全バックエンド設定を束ねる実行時構成型。ログレベルは Boost.Log 非依存の `log::severity_level` で保持する。 |
 | `Hermit/Hermit_builtin.hpp` | 組み込みマクロ、macro context、file reader / environment / process runner / generated・summary LLM HTTP executor の注入 API。 |
 | `Hermit/Hermit_http.hpp` | URL パラメーター設定テンプレート。 |
 | `Hermit/Hermit_llm.hpp` | LLM の生成、モデル一覧・embedding 取得、会話、段落、コードブロック処理 API。 |
-| `Hermit/Hermit_generation.hpp` | Stable Diffusion、Style-Bert-VITS2、ComfyUI の生成 API。Style-Bert-VITS2 の GET/POST 音声生成、モデル一覧・更新・状態・G2P・WAV取得 API、ComfyUI の queue/control/history/object-info/upload/WebSocket event API・`generated_file_info`・HTTP/file reader/binary storage 注入、SD 画像 reader 注入境界を公開。 |
+| `Hermit/Hermit_generation.hpp` | Stable Diffusion の生成と progress/interrogate/control API、Style-Bert-VITS2、ComfyUI の生成 API。Style-Bert-VITS2 の GET/POST 音声生成、モデル一覧・更新・状態・G2P・WAV取得 API、ComfyUI の queue/control/history/object-info/upload/WebSocket event API・`generated_file_info`・HTTP/file reader/binary storage 注入、SD 画像 reader 注入境界を公開。 |
 | `Hermit/Hermit_log.hpp` | severity・初期化 API、ログマクロ、差し替え可能なログ stream factory。sink・書式実装ヘッダーは `.cpp` に限定。 |
 | `Hermit/Hermit_log_types.hpp` | Boost.Log に依存しない severity 型。実行時設定が保持するログレベル境界。 |
 | `Hermit/Hermit_runtime.hpp` | phase、反復、seed、プロセス制御、差し替え可能な port connector・process launcher・process terminator・生成物 writer・SD/SB HTTP executor と画像 reader、アプリケーション実行 API。 |
 | `Hermit/Hermit_core.hpp` | コマンド・モード変換、値文字列化、基盤処理の公開宣言。 |
 | `Hermit/Hermit_png.hpp` | PNG tEXt パラメーター抽出 API。 |
-| `Hermit/Hermit_app_types.hpp` | 段落項目とアプリケーション実行モード（model list、embeddings、tokenize、ComfyUI queue/control/history/object-info/WebSocket event command を含む）。 |
+| `Hermit/Hermit_app_types.hpp` | 段落項目とアプリケーション実行モード（model list、embeddings、tokenize、Stable Diffusion API、ComfyUI queue/control/history/object-info/WebSocket event command を含む）。 |
 | `Hermit/Hermit_lru.hpp` | トークン数 LRU キャッシュの型と API。 |
 | `Hermit/Hermit_lru_impl.hpp` | LRU のテンプレート実体と CBOR ファイル永続化。設定・filesystem・ログに依存する非公開実装境界。reader/writer callback で保存と復元を差し替え可能。 |
 | `Hermit/Hermit_templates.hpp` | 乱数、unwrap、値変換、variant 取得の共通テンプレート。 |
@@ -87,8 +87,8 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/Hermit_parser_assignment_document_rules.hpp` | conditional／document と実験的 statement rule の component。Stage 1式statement、Stage 2単独代入、Stage 3複合代入、Stage 4複合文、Stage 5 if/else、Stage 6 while、Stage 7増減式を専用実験flagで構築する。Stage 8は専用flagで全statement構文を統合し、実験構成128/128 testsで検証済み。通常構成ではstatement全体のruleを構築せず、公開grammarは式placeholderのみ。 |
 | `Hermit/Hermit_public.hpp` | 軽量な公開 API 宣言。重い実装ヘッダーに依存しない。 |
 | `Hermit/Hermit_legacy.hpp` | 既存 `Hermit.hpp` の互換用集約ヘッダー。 |
-| `Hermit/Hermit_public_types.hpp` | Beast 型を公開しない LLM／HTTP 型消去境界。request/response、GET/POST/DELETE method、binary response、timeout、authorization、wait/storage callback を定義する。 |
-| `Hermit/Hermit_public_http_adapter.hpp` / `.cpp` | 既存 tcp executor と型消去 HTTP 境界の内部 adapter。全 executor 応答の HTTP 成功 status を検証する。 |
+| `Hermit/Hermit_public_types.hpp` | Beast 型を公開しない LLM／HTTP 型消去境界。request/response、GET/POST/DELETE method、binary response、timeout、authorization、追加 request headers、wait/storage callback を定義する。 |
+| `Hermit/Hermit_public_http_adapter.hpp` / `.cpp` | 既存 tcp executor と型消去 HTTP 境界の内部 adapter。全 executor 応答の 2xx HTTP status を成功として検証し、追加 request headers を伝達する。 |
 | `test/test_public_api.cpp` | 軽量公開 API と型消去契約の互換性テスト。 |
 | `docs/PARSER_TEMPLATE_BOUNDARY.md` | parser の内部 API、Spirit 文法、評価 visitor のテンプレート境界設計。 |
 | `docs/DEVELOPMENT_KNOWLEDGE.md` | Qi属性伝播・AST実験・依存注入テストで得た観測、採否、根拠をID付き表形式で管理する知見台帳。 |
@@ -131,7 +131,7 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `test/test_llm_backend.cpp` | TG／Kobold backend の要求・応答、Chat 形式、共通モック契約のテスト。 |
 | `Hermit/HermitLib.vcxproj` | Hermit 実装を Static Library としてビルドする共通ライブラリプロジェクト。 |
 
-現在の単体テストは 209 件（28 テストスイート、2026-11-27 の最新全件検証）で、CLI の既定値・共通/バックエンド別オプション反映・`--kc.bypass-eos` と `trim_stop` の独立性・不正モードエラー、例外安全なエントリーポイント、LRU、context の継承・上書き・型変換・optional取得・親値参照、phase 境界、文字列・filesystem の text/binary 入出力、親ディレクトリ作成、prompt 優先順位、書き込み失敗、画像 Base64/MIME と未知拡張子・不存在エラー、ログseverity変換、PNG署名・chunk境界・metadata key不在、Base64不正入力と閾値境界、組み込みマクロの registry、型変換、型不一致時の callback 未呼出、generated/summary の completion/token-count executor 成功と HTTP 失敗伝播、summary の max_tokens context と reasoning 除去・上限切り詰め、JSON エスケープ、コードブロック抽出とファイル名のパストラバーサル防止、パス操作、既定引数の乱数境界、exec マクロの既定拒否・明示許可、依存注入された環境 accessor／random source／process runner／file reader／port resolver・connector・waiter／process launcher・terminator と process runner の終了コード・失敗契約、全 command mode、LLM/SD の API ターゲット解決、LLM 共通バックエンド境界の Mock 契約、HTTP transport と各 request executor の Mock 契約、LLM completion/token-count の runtime HTTP/TCP 注入成功と HTTP status 失敗伝播、SD/LLM/ComfyUI runtime writer failure 伝播、既定 TCP transport を使う LLM/SD/SB/ComfyUI overload の loopback 通信、SB writer 失敗伝播、ComfyUI 履歴 URL/JSON・queue/control/history/object-info/models/embeddings/extensions/features/image-mask multipart/view/metadata API contract・WebSocket text/binary event stream forwarding・storage 注入・サブディレクトリ保持・sanitize・traversal 拒否、TCP JSON 要求のmethod・header・body・128 MiBを超える HTTP 応答 body の拒否・全 backend 注入 executor の非成功 status 例外、Stable Diffusion img2img の複数画像・mask・latent mask の Base64 要求と欠落ファイル失敗、各生成バックエンドの要求・応答解析、LLM のコードブロック・推論除去・項目リスト解析、公開parserの式 AST 評価・組み込みマクロ評価・再帰停止・条件式分岐・論理条件評価・演算子優先順位と重複token境界、マクロ変数・関数引数・ネスト・区切り記号不整合の解析、Qi 属性変換とplaceholder候補のbacktracking、予約語と識別子境界、代入・増減・statement構文の拒否、非テンプレート parse/evaluate 境界、公開モード変換、user-defined variable の区切り・重複キー、設定 stream の値反映・CLI 優先順位・不正値を検証します。実験的な式statementは `HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS`、単独代入は `HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS`、複合代入は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS`、複合文は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS`、if/elseは `HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS`、whileは `HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS`、前置/後置増減式は `HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT`、全statement統合はStage 1–7 flagと `HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS` を併用した時のみ有効です。Stage 8実験構成は128 tests / 25 suites、当時の既定構成は120 tests / 27 suites、2026-11-27の最新通常構成は209 tests / 28 suitesで検証しています。実験構文は既定構成には含めません。LLM、SD、SB、ComfyUI の既存 runtime overload は loopback mock server を使って既定 TCP transport 経由の通信を検証しています。process runtime は起動 callback の引数・例外と終了 callback の対象パス・終了数を検証し、detach される child process の終了コードは API が公開しません。
+現在の単体テストは 216 件（28 テストスイート、2026-11-28 の最新全件検証）で、CLI の既定値・共通/バックエンド別オプション反映・`--kc.bypass-eos` と `trim_stop` の独立性・不正モードエラー、例外安全なエントリーポイント、LRU、context の継承・上書き・型変換・optional取得・親値参照、phase 境界、文字列・filesystem の text/binary 入出力、親ディレクトリ作成、prompt 優先順位、書き込み失敗、画像 Base64/MIME と未知拡張子・不存在エラー、ログseverity変換、PNG署名・chunk境界・metadata key不在、Base64不正入力と閾値境界、組み込みマクロの registry、型変換、型不一致時の callback 未呼出、generated/summary の completion/token-count executor 成功と HTTP 失敗伝播、summary の max_tokens context と reasoning 除去・上限切り詰め、JSON エスケープ、コードブロック抽出とファイル名のパストラバーサル防止、パス操作、既定引数の乱数境界、exec マクロの既定拒否・明示許可、依存注入された環境 accessor／random source／process runner／file reader／port resolver・connector・waiter／process launcher・terminator と process runner の終了コード・失敗契約、全 command mode、LLM/SD の API ターゲット解決、LLM 共通バックエンド境界の Mock 契約、HTTP transport と各 request executor の Mock 契約、LLM completion/token-count の runtime HTTP/TCP 注入成功と HTTP status 失敗伝播、SD/LLM/ComfyUI runtime writer failure 伝播、既定 TCP transport を使う LLM/SD/SB/ComfyUI overload の loopback 通信、SB writer 失敗伝播、ComfyUI 履歴 URL/JSON・queue/control/history/users/userdata query/path/header/binary/204・jobs list/detail/cancellation query/path/body・object-info/models/embeddings/extensions/features/image-mask multipart/view/metadata/system-stats/default-workflow/prompt/template list/template file/i18n/web UI API contract・WebSocket text/binary event stream forwarding・storage 注入・サブディレクトリ保持・sanitize・traversal 拒否、TCP JSON 要求のmethod・header・body・128 MiBを超える HTTP 応答 body の拒否・全 backend 注入 executor の非成功 status 例外、Stable Diffusion API の progress/interrogate/control/Extras/PNG-info/options/list/refresh/create/train/memory/script/checkpoint API HTTP contract、img2img の複数画像・mask・latent mask の Base64 要求と欠落ファイル失敗、各生成バックエンドの要求・応答解析、LLM のコードブロック・推論除去・項目リスト解析、公開parserの式 AST 評価・組み込みマクロ評価・再帰停止・条件式分岐・論理条件評価・演算子優先順位と重複token境界、マクロ変数・関数引数・ネスト・区切り記号不整合の解析、Qi 属性変換とplaceholder候補のbacktracking、予約語と識別子境界、代入・増減・statement構文の拒否、非テンプレート parse/evaluate 境界、公開モード変換、user-defined variable の区切り・重複キー、設定 stream の値反映・CLI 優先順位・不正値を検証します。実験的な式statementは `HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS`、単独代入は `HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS`、複合代入は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS`、複合文は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS`、if/elseは `HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS`、whileは `HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS`、前置/後置増減式は `HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT`、全statement統合はStage 1–7 flagと `HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS` を併用した時のみ有効です。Stage 8実験構成は128 tests / 25 suites、当時の既定構成は120 tests / 27 suites、2026-11-28の最新通常構成は216 tests / 28 suitesで検証しています。実験構文は既定構成には含めません。LLM、SD、SB、ComfyUI の既存 runtime overload は loopback mock server を使って既定 TCP transport 経由の通信を検証しています。process runtime は起動 callback の引数・例外と終了 callback の対象パス・終了数を検証し、detach される child process の終了コードは API が公開しません。
 
 Stage 2–7の実験flag `HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT` を同時に有効にしたRelease x64検証構成では、単独・複合代入、block、if/else、while、前置/後置増減式のテストを含む124件（25 suites）が成功した。whileはplaceholder内で全loop共有の10,000 body実行予算を持ち、10,001回目が必要ならbodyの実行前に停止する。増減式は整数変数のみを更新し、prefixは更新後、postfixは更新前の値を返す。これらの構文は公開grammarには含めない。通常構成もRelease x64 Rebuild後に105件（25 suites）が成功した。
 
@@ -141,7 +141,7 @@ Stage 2–7の実験flag `HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS`、`HERMIT_ENAB
 | --- | --- | --- |
 | command / backend | サブコマンドで操作を選択し、生成時は `--backend` で `tg`, `kc`, `lmstudio`, `llama-cpp`, `vllm`, `ollama`, `sd`, `sb`, `cu` を指定する。 | `generate --backend <...>`、`server start|stop`、`png extract` |
 | tg / kc / lmstudio / llama-cpp / vllm / ollama | Text Generation Web UI、KoboldCpp、OpenAI 互換 LLM server 3種、Ollama native API のテキスト生成モード。 | `command_mode`、`llm_backend_parameters` |
-| sd / sb / cu | Stable Diffusion / Style-Bert-VITS2 / ComfyUI の連携モード。 | `command_mode` |
+| sd / sb / cu | Stable Diffusion 画像生成・`sd-api` 操作 / Style-Bert-VITS2 / ComfyUI の連携モード。 | `command_mode` |
 | LLM | 大規模言語モデル。テキスト生成の接続先。 | `--llm-*` |
 | Completions | prompt 文字列を送る生成 API。 | `--llm.mode completions` |
 | Chat Completions | messages 配列と会話履歴を使う生成 API。 | `--llm.mode chat-completions` |
@@ -265,7 +265,8 @@ Hermit models show --backend ollama --llm.model <model> [options]
 Hermit models running --backend ollama [options]
 Hermit models version --backend ollama [options]
 Hermit models <create|copy|delete|pull|push> --backend ollama --llm.model-action-options <json> [options]
-Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata> [options]
+Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata|system-stats|default-workflow|prompt-status|workflow-templates|template-file|i18n|web-ui|users|user-create|userdata-list|userdata-list-v2|userdata-get|userdata-put|userdata-delete|userdata-move|jobs|job|job-cancel|jobs-cancel> [options]
+Hermit sd-api <progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|refresh-embeddings|refresh-checkpoints|refresh-vae|memory|scripts|script-info|extensions|unload-checkpoint|reload-checkpoint> [options]
 Hermit embeddings create --backend <lmstudio|llama-cpp|vllm|ollama> --llm.model <model> [options]
 Hermit tokenize <encode|decode> --backend llama-cpp [options]
 ```
@@ -281,6 +282,22 @@ Hermit tokenize <encode|decode> --backend llama-cpp [options]
 | `generate --backend vllm` | vLLM の OpenAI 互換 Completions / Chat Completions |
 | `generate --backend ollama` | Ollama native `/api/generate` / `/api/chat` |
 | `generate --backend sd` | AUTOMATIC1111 Stable Diffusion WebUI との画像生成 |
+| `sd-api progress` | A1111 の `GET /sdapi/v1/progress`。`--sd.api-options` で `skip_current_image` query を指定 |
+| `sd-api interrogate` | A1111 の `POST /sdapi/v1/interrogate`。`--sd.api-options` に Base64 `image` と `clip` / `deepdanbooru` の `model` を指定 |
+| `sd-api interrupt` | A1111 の `POST /sdapi/v1/interrupt` で実行中処理を停止 |
+| `sd-api skip` | A1111 の `POST /sdapi/v1/skip` で現在の処理を skip |
+| `sd-api extra-single-image` | A1111 の `POST /sdapi/v1/extra-single-image` で画像を処理。`--sd.api-options` に Base64 `image` と任意の upscaler fields を指定 |
+| `sd-api extra-batch-images` | A1111 の `POST /sdapi/v1/extra-batch-images` で画像一覧を処理。`--sd.api-options` に `{name,data}` 配列の `imageList` と任意の upscaler fields を指定 |
+| `sd-api png-info` | A1111 の `POST /sdapi/v1/png-info` で PNG 情報を解析。`--sd.api-options` に Base64 `image` を指定 |
+| `sd-api options` | A1111 の `GET /sdapi/v1/options` で WebUI 設定を取得 |
+| `sd-api options-set` | A1111 の `POST /sdapi/v1/options` で設定を更新。`--sd.api-options` に非空 JSON object を指定 |
+| `sd-api create-embedding`, `create-hypernetwork`, `train-embedding`, `train-hypernetwork` | A1111 の各 POST API へ `--sd.api-options` の非空 JSON object を転送。request fields はサーバー版・設定に依存 |
+| `sd-api cmd-flags` | A1111 の command-line flags JSON を取得 |
+| `sd-api samplers`, `schedulers`, `upscalers`, `latent-upscale-modes` | A1111 の sampler/scheduler/upscaler 選択肢を JSON で取得 |
+| `sd-api sd-models`, `sd-vae`, `hypernetworks`, `face-restorers`, `realesrgan-models`, `prompt-styles`, `embeddings` | A1111 のモデル・VAE・hypernetwork・restorer・style・embedding 情報を JSON で取得 |
+| `sd-api refresh-embeddings`, `refresh-checkpoints`, `refresh-vae` | A1111 の embedding/checkpoint/VAE 一覧を再読込。body は指定しない |
+| `sd-api memory`, `scripts`, `script-info`, `extensions` | A1111 の memory、txt2img/img2img script 名、script API metadata、extension metadata を取得 |
+| `sd-api unload-checkpoint`, `reload-checkpoint` | A1111 の現在の model weights を unload、または current model を device へ reload。body は指定しない |
 | `generate --backend sb` | Style-Bert-VITS2 との音声生成 |
 | `generate --backend cu` | ComfyUI の prompt API への送信、画像アップロード |
 | `comfy queue` | ComfyUI の `GET /queue` で実行中・待機中の queue を取得 |
@@ -301,6 +318,25 @@ Hermit tokenize <encode|decode> --backend llama-cpp [options]
 | `comfy upload-mask` | ComfyUI の `POST /upload/mask` へ元画像参照付き multipart mask をアップロード |
 | `comfy view` | ComfyUI の `GET /view` から画像 bytes を取得して標準出力へ出力 |
 | `comfy view-metadata` | ComfyUI の `GET /view_metadata/{folder_name}` から safetensors metadata を取得 |
+| `comfy system-stats` | ComfyUI の `GET /system_stats` から system/device 状態を取得 |
+| `comfy default-workflow` | ComfyUI の `GET /default_workflow` から既定 workflow JSON を取得 |
+| `comfy prompt-status` | ComfyUI の `GET /prompt` から現在の queue status を取得 |
+| `comfy workflow-templates` | ComfyUI の `GET /workflow_templates` から custom node workflow template 一覧を取得 |
+| `comfy template-file` | ComfyUI の `/api/workflow_templates/{module}/...` から `--cu.template-path` の template file を取得 |
+| `comfy i18n` | ComfyUI の `GET /i18n` から custom node 翻訳を取得 |
+| `comfy web-ui` | ComfyUI の `GET /` から frontend HTML を標準出力へ出力 |
+| `comfy users` | ComfyUI の `GET /users` で storage 状態・ユーザー情報を取得。response は multi-user 設定により異なる |
+| `comfy user-create` | ComfyUI の `POST /users` で `--cu.api-options` の username を使って user を作成 |
+| `comfy userdata-list` | ComfyUI の `GET /userdata` で `dir` 配下のファイル一覧を取得 |
+| `comfy userdata-list-v2` | ComfyUI の `GET /v2/userdata` で directory/file の一覧を取得 |
+| `comfy userdata-get` | ComfyUI の `GET /userdata/{file}` から raw file bytes を取得し標準出力へ出力 |
+| `comfy userdata-put` | ComfyUI の `POST /userdata/{file}` へ `--cu.upload-file` の raw bytes を送信 |
+| `comfy userdata-delete` | ComfyUI の `DELETE /userdata/{file}` でファイルを削除 |
+| `comfy userdata-move` | ComfyUI の `POST /userdata/{file}/move/{dest}` でファイルを移動 |
+| `comfy jobs` | ComfyUI の `GET /api/jobs` で job 一覧を取得。`--cu.api-options` に status/workflow_id/sort_by/sort_order/limit/offset を指定 |
+| `comfy job` | ComfyUI の `GET /api/jobs/{job_id}` で `--cu.prompt-id` の job を取得 |
+| `comfy job-cancel` | ComfyUI の `POST /api/jobs/{job_id}/cancel` で `--cu.prompt-id` の job を取消 |
+| `comfy jobs-cancel` | ComfyUI の `POST /api/jobs/cancel` で `--cu.api-options` の `job_ids` 配列にある job を取消 |
 | `models list --backend lmstudio|llama-cpp|vllm|ollama` | 指定した LLM server のモデル一覧 API を呼び出し、JSON を標準出力へ出力 |
 | `models show --backend ollama` | Ollama の `/api/show` で指定モデルの詳細を取得して JSON を出力 |
 | `models running --backend ollama` | Ollama の `/api/ps` で稼働中モデル一覧を取得して JSON を出力 |
@@ -527,6 +563,7 @@ Ollama (`ollama`) は native `/api/generate`、`/api/chat`、`/api/embed` を使
 | --- | --- | --- |
 | `--sd.host` | — | バックエンド設定の「host」に対応する値を指定する。 |
 | `--sd.port` | — | バックエンド設定の「port」に対応する値を指定する。 |
+| `--sd.api-options` | — | `sd-api progress` の query option、または `sd-api` の画像・interrogate・options・create/train request fields を JSON object で指定する。create/train fields は WebUI の版・設定に応じて指定する。 |
 | `--sd.prompt-file` | — | バックエンド設定の「prompt file」に対応する値を指定する。 |
 | `--sd.negative-prompt-file` | — | バックエンド設定の「negative prompt file」に対応する値を指定する。 |
 | `--sd.output-file` | — | バックエンド設定の「output PNG file」に対応する値を指定する。 |
@@ -641,11 +678,15 @@ Ollama (`ollama`) は native `/api/generate`、`/api/chat`、`/api/embed` を使
 | `--cu.prompt-target` | — | バックエンド設定の「prompt target」に対応する値を指定する。 |
 | `--cu.upload-image-target` | — | バックエンド設定の「upload image target」に対応する値を指定する。 |
 | `--cu.api-options` | — | ComfyUI API の query または request fields を JSON object で指定する。 |
-| `--cu.prompt-id` | — | `comfy history-item` の prompt ID を指定する。 |
+| `--cu.prompt-id` | — | `comfy history-item` の prompt ID、または `comfy job` / `job-cancel` の job ID を指定する。 |
+| `--cu.user-id` | — | ComfyUI の `comfy-user` request header に設定する user ID を指定する。 |
+| `--cu.userdata-path` | — | userdata 操作の relative remote path を指定する。slash で階層を区切り、絶対パスと traversal は拒否される。 |
+| `--cu.userdata-destination` | — | `comfy userdata-move` の relative destination path を指定する。 |
+| `--cu.template-path` | — | `comfy template-file` で取得する custom node template の `module/relative-file` path を指定する。path traversal は拒否される。 |
 | `--cu.node-class` | — | `comfy object-info` で schema を取得する node class を指定する。未指定時は全 node class を取得する。 |
 | `--cu.model-folder` | — | `comfy models-folder` で model list を取得する folder を指定する。 |
 | `--cu.metadata-folder` | — | `comfy view-metadata` で metadata を取得する model folder を指定する。 |
-| `--cu.upload-file` | — | `comfy upload-image` / `upload-mask` で送信するローカル画像ファイルを指定する。 |
+| `--cu.upload-file` | — | `comfy upload-image` / `upload-mask` または `userdata-put` で送信するローカルファイルを指定する。 |
 | `--cu.client-id` | — | ComfyUI WebSocket `/ws` 接続の clientId query を指定する。 |
 | `--cu.event-count` | — | `comfy events` が終了するまでに受信する frame 数。0 は無制限。 |
 | `--cu.prompt` | — | バックエンド設定の「prompt」に対応する値を指定する。 |

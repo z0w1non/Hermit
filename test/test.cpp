@@ -294,9 +294,50 @@ TEST(parse_command_line, rejects_model_list_for_unsupported_backends)
     EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::program_options_error);
 }
 
+TEST(parse_command_line, configures_stable_diffusion_api_actions)
+{
+    for (const std::string& action : std::vector<std::string>{ "progress", "interrupt", "skip", "interrogate", "extra-single-image", "extra-batch-images", "png-info", "options", "options-set", "create-embedding", "create-hypernetwork", "train-embedding", "train-hypernetwork", "memory", "scripts", "script-info", "extensions", "cmd-flags", "samplers", "schedulers", "upscalers", "latent-upscale-modes", "sd-models", "sd-vae", "hypernetworks", "face-restorers", "realesrgan-models", "prompt-styles", "embeddings", "refresh-embeddings", "refresh-checkpoints", "refresh-vae", "unload-checkpoint", "reload-checkpoint" })
+    {
+        std::vector<std::string> arguments{ "Hermit.exe", "sd-api", action };
+        if (action == "interrogate")
+        {
+            arguments.emplace_back("--sd.api-options");
+            arguments.emplace_back(R"({"image":"aW1hZ2U=","model":"clip"})");
+        }
+        else if (action == "extra-single-image" || action == "png-info")
+        {
+            arguments.emplace_back("--sd.api-options");
+            arguments.emplace_back(R"({"image":"aW1hZ2U="})");
+        }
+        else if (action == "extra-batch-images")
+        {
+            arguments.emplace_back("--sd.api-options");
+            arguments.emplace_back(R"({"imageList":[{"name":"input.png","data":"aW1hZ2U="}]})");
+        }
+        else if (action == "options-set")
+        {
+            arguments.emplace_back("--sd.api-options");
+            arguments.emplace_back(R"({"samples_save":false})");
+        }
+        else if (action == "create-embedding" || action == "create-hypernetwork" || action == "train-embedding" || action == "train-hypernetwork")
+        {
+            arguments.emplace_back("--sd.api-options");
+            arguments.emplace_back(R"({"opaque":"pass-through"})");
+        }
+        commandline_args args{ arguments };
+        Hermit::config cfg;
+        EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success) << action;
+        EXPECT_EQ(cfg.command_mode, Hermit::command_mode::manage_sd_api) << action;
+        EXPECT_EQ(cfg.sd.api_action, action) << action;
+    }
+    commandline_args missing_options{ "Hermit.exe", "sd-api", "interrogate" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(missing_options.argc(), missing_options.argv(), cfg), Hermit::command_line::parse_result::program_options_error);
+}
+
 TEST(parse_command_line, configures_comfyui_queue_and_control_operations)
 {
-    for (const std::string& action : std::vector<std::string>{ "queue", "queue-update", "history", "history-item", "history-update", "interrupt", "free", "events", "object-info", "models", "models-folder", "embeddings", "extensions", "features", "upload-image", "upload-mask", "view", "view-metadata" })
+        for (const std::string& action : std::vector<std::string>{ "queue", "queue-update", "history", "history-item", "history-update", "interrupt", "free", "events", "object-info", "models", "models-folder", "embeddings", "extensions", "features", "upload-image", "upload-mask", "view", "view-metadata", "system-stats", "default-workflow", "prompt-status", "workflow-templates", "i18n", "web-ui", "template-file", "users", "user-create", "userdata-list", "userdata-list-v2", "userdata-get", "userdata-put", "userdata-delete", "userdata-move", "jobs", "job", "job-cancel", "jobs-cancel" })
     {
         std::vector<std::string> arguments{ "Hermit.exe", "comfy", action };
         if (action == "queue-update")
@@ -309,7 +350,7 @@ TEST(parse_command_line, configures_comfyui_queue_and_control_operations)
             arguments.emplace_back("--cu.api-options");
             arguments.emplace_back(R"({"max_items":5})");
         }
-        else if (action == "history-item")
+        else if (action == "history-item" || action == "job" || action == "job-cancel")
         {
             arguments.emplace_back("--cu.prompt-id");
             arguments.emplace_back("prompt-1");
@@ -318,6 +359,46 @@ TEST(parse_command_line, configures_comfyui_queue_and_control_operations)
         {
             arguments.emplace_back("--cu.api-options");
             arguments.emplace_back(R"({"clear":true})");
+        }
+        else if (action == "jobs")
+        {
+            arguments.emplace_back("--cu.api-options");
+            arguments.emplace_back(R"({"limit":5,"status":"pending"})");
+        }
+        else if (action == "jobs-cancel")
+        {
+            arguments.emplace_back("--cu.api-options");
+            arguments.emplace_back(R"({"job_ids":["job-1"]})");
+        }
+        else if (action == "user-create")
+        {
+            arguments.emplace_back("--cu.api-options");
+            arguments.emplace_back(R"({"username":"Test User"})");
+        }
+        else if (action == "userdata-list")
+        {
+            arguments.emplace_back("--cu.api-options");
+            arguments.emplace_back(R"({"dir":"settings"})");
+        }
+        else if (action == "userdata-list-v2")
+        {
+            arguments.emplace_back("--cu.api-options");
+            arguments.emplace_back(R"({"path":"settings"})");
+        }
+        else if (action == "userdata-get" || action == "userdata-delete" || action == "userdata-put" || action == "userdata-move")
+        {
+            arguments.emplace_back("--cu.userdata-path");
+            arguments.emplace_back("settings/config.json");
+            if (action == "userdata-put")
+            {
+                arguments.emplace_back("--cu.upload-file");
+                arguments.emplace_back("config.json");
+            }
+            if (action == "userdata-move")
+            {
+                arguments.emplace_back("--cu.userdata-destination");
+                arguments.emplace_back("settings/archive.json");
+            }
         }
         else if (action == "events")
         {
@@ -335,6 +416,11 @@ TEST(parse_command_line, configures_comfyui_queue_and_control_operations)
         {
             arguments.emplace_back("--cu.model-folder");
             arguments.emplace_back("checkpoints");
+        }
+        else if (action == "template-file")
+        {
+            arguments.emplace_back("--cu.template-path");
+            arguments.emplace_back("example-node/example_workflows/example.json");
         }
         else if (action == "view")
         {

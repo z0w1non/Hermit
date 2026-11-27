@@ -320,6 +320,7 @@ namespace Hermit
             sd_options.add_options()
                 ("sd.host", po::value(&cfg.sd.host)->default_value("localhost"), "SD host")
                 ("sd.port", po::value(&cfg.sd.port)->default_value("7860"), "SD port")
+                ("sd.api-options", po::value(&cfg.sd.api_options)->default_value(""), "Stable Diffusion API request options as a JSON object")
                 ("sd.prompt-file", po::value(&cfg.sd.prompt_file)->default_value("prompt"), "SD prompt file")
                 ("sd.negative-prompt-file", po::value(&cfg.sd.negative_prompt_file)->default_value("negative_prompt"), "SD negative prompt file")
                 ("sd.output-file", po::value(&cfg.sd.output_file)->default_value("{{datetime}}.png"), "SD output PNG file")
@@ -440,11 +441,15 @@ namespace Hermit
                 ("cu.prompt-target", po::value(&cfg.cu.prompt_target)->default_value("/prompt"), "Comfy UI prompt target")
                 ("cu.upload-image-target", po::value(&cfg.cu.upload_image_target)->default_value("/upload/image"), "Comfy UI upload image target")
                 ("cu.api-options", po::value(&cfg.cu.api_options)->default_value(""), "ComfyUI API query or request fields as a JSON object")
-                ("cu.prompt-id", po::value(&cfg.cu.api_prompt_id)->default_value(""), "ComfyUI prompt ID for history operations")
+                ("cu.prompt-id", po::value(&cfg.cu.api_prompt_id)->default_value(""), "ComfyUI prompt/job ID for history and job operations")
                 ("cu.node-class", po::value(&cfg.cu.api_node_class)->default_value(""), "ComfyUI node class for object-info")
                 ("cu.model-folder", po::value(&cfg.cu.api_model_folder)->default_value(""), "ComfyUI model folder for models-folder")
                 ("cu.metadata-folder", po::value(&cfg.cu.api_metadata_folder)->default_value(""), "ComfyUI model folder for view-metadata")
-                ("cu.upload-file", po::value(&cfg.cu.upload_file)->default_value(""), "Local image file for comfy upload-image/upload-mask")
+                ("cu.user-id", po::value(&cfg.cu.api_user_id)->default_value(""), "ComfyUI user ID sent in the comfy-user header")
+                ("cu.userdata-path", po::value(&cfg.cu.userdata_path)->default_value(""), "Relative ComfyUI userdata path")
+                ("cu.userdata-destination", po::value(&cfg.cu.userdata_destination)->default_value(""), "Destination path for comfy userdata-move")
+                ("cu.template-path", po::value(&cfg.cu.api_template_path)->default_value(""), "ComfyUI custom-node workflow template path module/relative-file")
+                ("cu.upload-file", po::value(&cfg.cu.upload_file)->default_value(""), "Local file for comfy upload-image/upload-mask/userdata-put")
                 ("cu.client-id", po::value(&cfg.cu.client_id)->default_value(""), "ComfyUI WebSocket client ID")
                 ("cu.event-count", po::value(&cfg.cu.event_count)->default_value(0), "ComfyUI WebSocket event limit (0 means no limit)")
                 ("cu.prompt", po::value<std::string>()->default_value("")->notifier(make_unescape_string_notifier(cfg.cu.prompt)), "Comfy UI prompt")
@@ -530,7 +535,8 @@ namespace Hermit
                     << "  Hermit models show --backend ollama --llm.model <model> [options]\n"
                     << "  Hermit models running --backend ollama [options]\n"
                     << "  Hermit models version --backend ollama [options]\n"
-                    << "  Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata> [options]\n"
+                    << "  Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata|system-stats|default-workflow|users|user-create|userdata-list|userdata-list-v2|userdata-get|userdata-put|userdata-delete|userdata-move|jobs|job|job-cancel|jobs-cancel> [options]\n"
+                    << "  Hermit sd-api <progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|memory|scripts|script-info|extensions|refresh-embeddings|refresh-checkpoints|refresh-vae|unload-checkpoint|reload-checkpoint> [options]\n"
                     << "  Hermit models <create|copy|delete|pull|push> --backend ollama --llm.model-action-options <json> [options]\n"
                     << "  Hermit embeddings create --backend <lmstudio|llama-cpp|vllm|ollama> --llm.model <model> [options]\n"
                     << "  Hermit tokenize encode --backend llama-cpp [options]\n"
@@ -707,7 +713,15 @@ namespace Hermit
                     && action != "history-update" && action != "interrupt" && action != "free" && action != "events"
                     && action != "object-info" && action != "models" && action != "models-folder"
                     && action != "embeddings" && action != "extensions" && action != "features"
-                    && action != "upload-image" && action != "upload-mask" && action != "view" && action != "view-metadata")
+                    && action != "upload-image" && action != "upload-mask" && action != "view" && action != "view-metadata"
+                    && action != "system-stats" && action != "default-workflow"
+                    && action != "prompt-status"
+                    && action != "workflow-templates" && action != "i18n" && action != "web-ui"
+                    && action != "template-file"
+                    && action != "users" && action != "user-create"
+                    && action != "userdata-list" && action != "userdata-list-v2" && action != "userdata-get"
+                    && action != "userdata-put" && action != "userdata-delete" && action != "userdata-move"
+                    && action != "jobs" && action != "job" && action != "job-cancel" && action != "jobs-cancel")
                 {
                     boost::nowide::cerr << "未対応の ComfyUI API 操作です: " << action << '\n';
                     return parse_result::program_options_error;
@@ -727,6 +741,32 @@ namespace Hermit
                     boost::nowide::cerr << "comfy history-item には --cu.prompt-id が必要です。\n";
                     return parse_result::program_options_error;
                 }
+                if ((action == "job" || action == "job-cancel") && cfg.cu.api_prompt_id.empty())
+                {
+                    boost::nowide::cerr << "comfy " << action << " には --cu.prompt-id が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (action == "userdata-list" && cfg.cu.api_options.empty())
+                {
+                    boost::nowide::cerr << "comfy userdata-list には --cu.api-options dir が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if ((action == "userdata-get" || action == "userdata-put" || action == "userdata-delete" || action == "userdata-move")
+                    && cfg.cu.userdata_path.empty())
+                {
+                    boost::nowide::cerr << "comfy " << action << " には --cu.userdata-path が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (action == "userdata-put" && cfg.cu.upload_file.empty())
+                {
+                    boost::nowide::cerr << "comfy userdata-put には --cu.upload-file が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (action == "userdata-move" && cfg.cu.userdata_destination.empty())
+                {
+                    boost::nowide::cerr << "comfy userdata-move には --cu.userdata-destination が必要です。\n";
+                    return parse_result::program_options_error;
+                }
                 if (action == "events" && cfg.cu.event_count < 0)
                 {
                     boost::nowide::cerr << "comfy events の --cu.event-count は 0 以上で指定してください。\n";
@@ -742,8 +782,58 @@ namespace Hermit
                     boost::nowide::cerr << "comfy view-metadata には --cu.metadata-folder が必要です。\n";
                     return parse_result::program_options_error;
                 }
+                if (action == "template-file" && cfg.cu.api_template_path.empty())
+                {
+                    boost::nowide::cerr << "comfy template-file には --cu.template-path が必要です。\n";
+                    return parse_result::program_options_error;
+                }
                 cfg.cu.api_action = action;
                 cfg.command_mode = command_mode::manage_comfyui_api;
+            }
+            else if (command == "sd-api" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                if (action != "progress" && action != "interrogate" && action != "interrupt" && action != "skip"
+                    && action != "extra-single-image" && action != "extra-batch-images" && action != "png-info"
+                    && action != "options" && action != "options-set" && action != "cmd-flags" && action != "samplers"
+                    && action != "create-embedding" && action != "create-hypernetwork" && action != "train-embedding" && action != "train-hypernetwork"
+                    && action != "memory" && action != "scripts" && action != "script-info" && action != "extensions"
+                    && action != "schedulers" && action != "upscalers" && action != "latent-upscale-modes"
+                    && action != "sd-models" && action != "sd-vae" && action != "hypernetworks"
+                    && action != "face-restorers" && action != "realesrgan-models" && action != "prompt-styles" && action != "embeddings"
+                    && action != "refresh-embeddings" && action != "refresh-checkpoints" && action != "refresh-vae"
+                    && action != "unload-checkpoint" && action != "reload-checkpoint")
+                {
+                    boost::nowide::cerr << "未対応の Stable Diffusion API 操作です: " << action << '\n';
+                    return parse_result::program_options_error;
+                }
+                if ((action == "interrogate" || action == "extra-single-image" || action == "extra-batch-images"
+                    || action == "png-info" || action == "options-set" || action == "create-embedding"
+                    || action == "create-hypernetwork" || action == "train-embedding" || action == "train-hypernetwork")
+                    && cfg.sd.api_options.empty())
+                {
+                    boost::nowide::cerr << "sd-api " << action << " には --sd.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if ((action == "interrupt" || action == "skip" || action == "cmd-flags" || action == "samplers"
+                    || action == "schedulers" || action == "upscalers" || action == "latent-upscale-modes"
+                    || action == "sd-models" || action == "sd-vae" || action == "hypernetworks"
+                    || action == "face-restorers" || action == "realesrgan-models" || action == "prompt-styles" || action == "embeddings"
+                    || action == "memory" || action == "scripts" || action == "script-info" || action == "extensions"
+                    || action == "refresh-embeddings" || action == "refresh-checkpoints" || action == "refresh-vae"
+                    || action == "unload-checkpoint" || action == "reload-checkpoint")
+                    && !cfg.sd.api_options.empty())
+                {
+                    boost::nowide::cerr << "sd-api " << action << " は --sd.api-options を受け取りません。\n";
+                    return parse_result::program_options_error;
+                }
+                if (action == "options" && !cfg.sd.api_options.empty())
+                {
+                    boost::nowide::cerr << "sd-api options は --sd.api-options を受け取りません。値の変更には options-set を使ってください。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.sd.api_action = action;
+                cfg.command_mode = command_mode::manage_sd_api;
             }
             else if (command == "embeddings" && action_iterator != vm.end()
                 && action_iterator->second.as<std::string>() == "create")
