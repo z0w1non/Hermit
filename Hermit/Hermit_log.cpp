@@ -68,15 +68,22 @@ namespace Hermit
             return sink;
         }
 
-        boost::shared_ptr<sinchronous_sink> create_file_sink(const std::filesystem::path& log)
+        std::shared_ptr<std::ostream> create_stream(const std::filesystem::path& log, const stream_factory& factory)
         {
-            filesystem::create_parent_directories(log);
-            boost::shared_ptr<boost::nowide::ofstream> ofs{ boost::make_shared<boost::nowide::ofstream>(log, std::ios::app) };
-            if (!ofs->is_open())
+            std::shared_ptr<std::ostream> ostream{ factory(log) };
+            if (!ostream || !*ostream)
             {
                 Hermit::throw_exception(file_open_exception{} << error_info::path{ log });
             }
-            return create_stream_sink(ofs);
+            return ostream;
+        }
+
+        boost::shared_ptr<sinchronous_sink> create_file_sink(const std::filesystem::path& log,
+            const stream_factory& factory)
+        {
+            const std::shared_ptr<std::ostream> ostream{ create_stream(log, factory) };
+            const boost::shared_ptr<std::ostream> boost_ostream{ ostream.get(), [keep_alive = std::move(ostream)](std::ostream*) {} };
+            return create_stream_sink(boost_ostream);
         }
 
         boost::shared_ptr<sinchronous_sink> create_cout_sink()
@@ -94,22 +101,36 @@ namespace Hermit
 
         void init_log_file(const std::filesystem::path& log)
         {
-            const boost::shared_ptr<sinchronous_sink> sink{ create_file_sink(log) };
+            init_log_file(log, [](const std::filesystem::path& path)
+            {
+                filesystem::create_parent_directories(path);
+                const std::shared_ptr<boost::nowide::ofstream> output{ std::make_shared<boost::nowide::ofstream>(path, std::ios::app) };
+                if (!output->is_open())
+                {
+                    Hermit::throw_exception(file_open_exception{} << error_info::path{ path });
+                }
+                return output;
+            });
+        }
+
+        void init_log_file(const std::filesystem::path& log, const stream_factory& factory)
+        {
+            const boost::shared_ptr<sinchronous_sink> sink{ create_file_sink(log, factory) };
             set_formatter(sink);
             boost::log::core::get()->add_sink(sink);
         }
 
-        boost::log::trivial::severity_level string_to_severity_level(std::string_view log_level)
+        severity_level string_to_severity_level(std::string_view log_level)
         {
-            using map_type = string_unordered_map<boost::log::trivial::severity_level>;
+            using map_type = string_unordered_map<severity_level>;
             static const map_type map
             {
-                { "trace", boost::log::trivial::trace },
-                { "debug", boost::log::trivial::debug },
-                { "info", boost::log::trivial::info },
-                { "warning", boost::log::trivial::warning },
-                { "error", boost::log::trivial::error },
-                { "fatal", boost::log::trivial::fatal }
+                { "trace", severity_level::trace },
+                { "debug", severity_level::debug },
+                { "info", severity_level::info },
+                { "warning", severity_level::warning },
+                { "error", severity_level::error },
+                { "fatal", severity_level::fatal }
             };
             if (const map_type::const_iterator iter{ map.find(log_level) }; iter != map.end())
             {
@@ -118,10 +139,23 @@ namespace Hermit
             Hermit::throw_exception(logic_error{} << error_info::description{ std::string{ log_level } });
         }
 
-        void init_log(bool verbose, const std::optional<std::filesystem::path> log_file, boost::log::trivial::severity_level log_level)
+        void init_log(bool verbose, const std::optional<std::filesystem::path> log_file, const severity_level log_level)
         {
             boost::log::core::get()->remove_all_sinks();
-            boost::log::core::get()->set_filter(boost::log::trivial::severity >= log_level);
+            const boost::log::trivial::severity_level boost_log_level{ [&log_level]
+            {
+                switch (log_level)
+                {
+                case severity_level::trace: return boost::log::trivial::trace;
+                case severity_level::debug: return boost::log::trivial::debug;
+                case severity_level::info: return boost::log::trivial::info;
+                case severity_level::warning: return boost::log::trivial::warning;
+                case severity_level::error: return boost::log::trivial::error;
+                case severity_level::fatal: return boost::log::trivial::fatal;
+                }
+                return boost::log::trivial::info;
+            }() };
+            boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost_log_level);
             if (verbose)
             {
                 log::init_log_cout();

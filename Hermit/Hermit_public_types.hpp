@@ -9,7 +9,7 @@
 
 namespace Hermit::public_api
 {
-    enum class http_method { get, post };
+    enum class http_method { get, post, delete_ };
 
     using wait_callback = std::function<void(std::chrono::milliseconds)>;
     using binary_storage = std::function<void(std::string_view path, std::string_view data)>;

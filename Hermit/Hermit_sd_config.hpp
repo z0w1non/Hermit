@@ -151,8 +151,8 @@ namespace Hermit
     {
         std::string target;
         std::vector<std::string> init_images;
-        int seed_resize_from_h{};
-        int seed_resize_from_w{};
+        int seed_resize_from_h{ -1 };
+        int seed_resize_from_w{ -1 };
         int resize_mode{};
         double image_cfg_scale{};
         std::string mask;

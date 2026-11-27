@@ -83,6 +83,24 @@ TEST(public_api, adapts_executor_with_status_and_headers)
     EXPECT_EQ(response.content_type, "application/json");
 }
 
+TEST(public_api, adapts_delete_http_method_with_json_body)
+{
+    const Hermit::public_api::http_executor executor{ Hermit::public_api::make_http_executor(
+        [](std::string_view, std::string_view, const Hermit::tcp::request_type& request)
+        {
+            EXPECT_EQ(request.method(), boost::beast::http::verb::delete_);
+            EXPECT_EQ(request.body(), R"({"model":"old-model"})");
+            Hermit::tcp::response_type response;
+            response.result(boost::beast::http::status::ok);
+            response.body() = "deleted";
+            return response;
+        }) };
+    Hermit::public_api::http_request_data request;
+    request.method = Hermit::public_api::http_method::delete_;
+    request.body = R"({"model":"old-model"})";
+    EXPECT_EQ(executor(request).body, "deleted");
+}
+
 TEST(public_api, marks_binary_download_responses)
 {
     const Hermit::public_api::http_executor executor{ Hermit::public_api::make_http_executor(

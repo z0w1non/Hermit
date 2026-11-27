@@ -2,7 +2,9 @@
 #include <string_view>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -40,39 +42,163 @@ TEST(builtin, returns_empty_for_missing_environment_and_ignores_setter_result)
     EXPECT_TRUE(Hermit::value_to_string(Hermit::builtin::setenv(set_args, [](std::string_view, std::string_view) { return false; })).empty());
 }
 
-TEST(builtin, reads_text_file_relative_to_configured_base_path)
+TEST(builtin, injects_text_file_reader_with_configured_path)
 {
     Hermit::config cfg;
-    const std::filesystem::path base_path{ std::filesystem::temp_directory_path() / "hermit_macro_file_test" };
-    std::filesystem::remove_all(base_path);
-    std::filesystem::create_directories(base_path);
-    cfg.base_path = base_path.string();
-    Hermit::filesystem::write_file(cfg, "macro content", "input.txt");
-
+    cfg.base_path = "configured-base";
     Hermit::context ctx;
     const std::vector<Hermit::value_type> arguments{ std::string{ "input" } };
     const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
-    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::file(args)), "macro content");
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::file(args, [](std::string_view path, const Hermit::config& reader_cfg) {
+        EXPECT_EQ(path, "input");
+        EXPECT_EQ(reader_cfg.base_path, "configured-base");
+        return std::string{ "macro content" };
+    })), "macro content");
+}
+
+TEST(builtin, propagates_text_file_reader_failure)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "missing.txt" } };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::file(args, [](std::string_view, const Hermit::config&) -> std::string { throw std::runtime_error{ "read failed" }; }), std::runtime_error);
+}
+
+TEST(builtin, file_macro_default_reader_complements_extension_and_base_path)
+{
+    const std::filesystem::path base_path{ std::filesystem::temp_directory_path() / "hermit_builtin_file_macro_test" };
+    std::filesystem::remove_all(base_path);
+    std::filesystem::create_directories(base_path);
+    const std::filesystem::path input_path{ base_path / "input.txt" };
+    {
+        std::ofstream output{ input_path };
+        ASSERT_TRUE(output.is_open());
+        output << "default file content";
+    }
+
+    Hermit::config cfg;
+    cfg.base_path = base_path.string();
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "input" } };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::file(args)), "default file content");
 
     std::filesystem::remove_all(base_path);
 }
 
-TEST(builtin, expands_context_variables_in_file_macro_base_path)
+TEST(builtin, generated_macro_injects_completion_requests)
 {
     Hermit::config cfg;
-    const std::filesystem::path base_path{ std::filesystem::temp_directory_path() / "hermit_macro_context_file_test" };
-    std::filesystem::remove_all(base_path);
-    std::filesystem::create_directories(base_path);
-    cfg.base_path = "{{ root }}";
-    cfg.ctx.set("root", base_path.string());
-    Hermit::filesystem::write_file(cfg, "context content", "input.txt");
-
+    cfg.llm.backend = &cfg.tg;
+    cfg.llm.host = "localhost";
+    cfg.llm.port = "8080";
+    cfg.llm.completions_target = "/completion";
+    cfg.llm.token_count_target = "/token-count";
+    cfg.llm.max_completion_iterations = 2;
+    cfg.llm.min_completion_tokens = 5;
+    cfg.llm.generation_suffix = "!";
+    cfg.tg.common.max_tokens = 16;
+    cfg.tg.common.truncation_length = 100;
     Hermit::context ctx;
-    const std::vector<Hermit::value_type> arguments{ std::string{ "input.txt" } };
+    const std::vector<Hermit::value_type> arguments{ std::string{ "generated prompt" } };
     const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
-    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::file(args)), "context content");
+    int request_count{};
+    const Hermit::public_api::http_executor executor{ [&request_count](const Hermit::public_api::http_request_data& request)
+    {
+        ++request_count;
+        if (request.target == "/token-count")
+        {
+            const int length{ request_count == 1 ? 0 : 5 };
+            return Hermit::public_api::http_response_data{ 200, "{\"length\":" + std::to_string(length) + "}" };
+        }
+        EXPECT_EQ(request.target, "/completion");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("prompt"), "generated prompt");
+        return Hermit::public_api::http_response_data{ 200, R"({"choices":[{"text":"mock result"}]})" };
+    } };
 
-    std::filesystem::remove_all(base_path);
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::generated(args, executor)), "mock result!");
+    EXPECT_EQ(request_count, 3);
+}
+
+TEST(builtin, generated_macro_propagates_injected_http_failure)
+{
+    Hermit::config cfg;
+    cfg.llm.backend = &cfg.tg;
+    cfg.llm.host = "localhost";
+    cfg.llm.port = "8080";
+    cfg.llm.token_count_target = "/token-count";
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "generated prompt" } };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 503, "unavailable" };
+    } };
+
+    EXPECT_THROW(Hermit::builtin::generated(args, executor), Hermit::http_status_exception);
+}
+
+TEST(builtin, summary_macro_injects_completion_and_expands_temporary_variables)
+{
+    Hermit::config cfg;
+    cfg.llm.backend = &cfg.tg;
+    cfg.llm.host = "localhost";
+    cfg.llm.port = "8080";
+    cfg.llm.completions_target = "/completion";
+    cfg.llm.token_count_target = "/token-count";
+    cfg.llm.max_completion_iterations = 1;
+    cfg.llm.min_completion_tokens = 1;
+    cfg.llm.reasoning_prefix = "[reason]";
+    cfg.llm.reasoning_suffix = "[/reason]";
+    cfg.tg.common.max_tokens = 16;
+    cfg.tg.common.truncation_length = 100;
+    cfg.lru_cache = Hermit::config::cache_type{ [](std::string_view value) { return static_cast<int>(value.size()); } };
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "{{target}}\nmax={{max_tokens}}" },
+        std::string{ "source text" }, 5 };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    std::vector<std::string> targets;
+    const Hermit::public_api::http_executor executor{ [&targets](const Hermit::public_api::http_request_data& request)
+    {
+        targets.push_back(request.target);
+        if (request.target == "/token-count")
+        {
+            return Hermit::public_api::http_response_data{ 200, R"({"length":0})" };
+        }
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("prompt"), "source text\nmax=5");
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"choices":[{"text":"[reason]private[/reason]one\nsummary words"}]})" };
+    } };
+
+    EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::summary(args, executor)), "one");
+    ASSERT_EQ(targets.size(), 3U);
+    EXPECT_EQ(targets[0], "/token-count");
+    EXPECT_EQ(targets[1], "/completion");
+    EXPECT_EQ(targets[2], "/token-count");
+    EXPECT_EQ(ctx.get("target"), nullptr);
+    EXPECT_EQ(ctx.get("max_tokens"), nullptr);
+}
+
+TEST(builtin, summary_macro_propagates_injected_http_failure)
+{
+    Hermit::config cfg;
+    cfg.llm.backend = &cfg.tg;
+    cfg.llm.host = "localhost";
+    cfg.llm.port = "8080";
+    cfg.llm.token_count_target = "/token-count";
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "{{target}}" }, std::string{ "source" }, 5 };
+    const Hermit::builtin::macro_argument_type args{ arguments, cfg, ctx };
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 503, "unavailable" };
+    } };
+
+    EXPECT_THROW(Hermit::builtin::summary(args, executor), Hermit::http_status_exception);
+    EXPECT_EQ(ctx.get("target"), nullptr);
+    EXPECT_EQ(ctx.get("max_tokens"), nullptr);
 }
 
 TEST(builtin, injects_random_source)
@@ -90,12 +216,30 @@ TEST(builtin, injects_random_source)
 TEST(builtin, injects_process_runner)
 {
     Hermit::config cfg;
+    cfg.allow_process_exec = true;
     Hermit::context ctx;
     const std::vector<Hermit::value_type> arguments{ std::string{"tool"}, std::string{"--flag"}, std::string{"value"} };
     const Hermit::builtin::macro_argument_type macro_args{ arguments, cfg, ctx };
     EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::exec(macro_args, [](std::string_view executable, const std::vector<std::string>& process_arguments) { EXPECT_EQ(executable, "tool"); EXPECT_EQ(process_arguments.size(), 2U); EXPECT_EQ(process_arguments[0], "--flag"); EXPECT_EQ(process_arguments[1], "value"); return std::pair<int, std::string>{ 7, "output" }; })), "output");
     ASSERT_NE(ctx.get("exit_code"), nullptr);
     EXPECT_EQ(Hermit::value_to_string(*ctx.get("exit_code")), "7");
+}
+
+TEST(builtin, blocks_exec_macro_by_default_before_process_launch)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> arguments{ std::string{ "tool" } };
+    const Hermit::builtin::macro_argument_type macro_args{ arguments, cfg, ctx };
+    bool runner_invoked{};
+
+    EXPECT_THROW(Hermit::builtin::exec(macro_args,
+        [&runner_invoked](std::string_view, const std::vector<std::string>&)
+        {
+            runner_invoked = true;
+            return std::pair<int, std::string>{ 0, "" };
+        }), Hermit::macro_exception);
+    EXPECT_FALSE(runner_invoked);
 }
 
 TEST(builtin, registry_exposes_supported_macros_and_rejects_unknown_names)
@@ -135,6 +279,105 @@ TEST(builtin, converts_macro_arguments_and_rejects_invalid_argument_counts)
     const Hermit::builtin::macro_argument_type string_args{ string_arguments, cfg, ctx };
     EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::string_(string_args)), "7");
 
+}
+
+TEST(builtin, rejects_missing_required_arguments_before_side_effects)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> no_arguments;
+    const Hermit::builtin::macro_argument_type args{ no_arguments, cfg, ctx };
+
+    EXPECT_THROW(Hermit::builtin::file(args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::getenv(args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::setenv(args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::generated(args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::exec(args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::choice(args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::json_literal(args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::code_block(args), Hermit::macro_exception);
+
+    const std::vector<Hermit::value_type> too_many_arguments{ std::string{ "a" }, std::string{ "b" }, std::string{ "c" } };
+    const Hermit::builtin::macro_argument_type too_many_args{ too_many_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::file(too_many_args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::random(too_many_args), Hermit::macro_exception);
+    EXPECT_THROW(Hermit::builtin::code_block(too_many_args), Hermit::macro_exception);
+}
+
+TEST(builtin, rejects_invalid_value_types_before_invoking_injected_boundaries)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> invalid_file_arguments{ 7 };
+    const Hermit::builtin::macro_argument_type invalid_file_args{ invalid_file_arguments, cfg, ctx };
+    bool reader_invoked{};
+    EXPECT_THROW(Hermit::builtin::file(invalid_file_args,
+        [&reader_invoked](std::string_view, const Hermit::config&)
+        {
+            reader_invoked = true;
+            return std::string{};
+        }), std::exception);
+    EXPECT_FALSE(reader_invoked);
+
+    const std::vector<Hermit::value_type> invalid_getenv_arguments{ 7 };
+    const Hermit::builtin::macro_argument_type invalid_getenv_args{ invalid_getenv_arguments, cfg, ctx };
+    bool getter_invoked{};
+    EXPECT_THROW(Hermit::builtin::getenv(invalid_getenv_args,
+        [&getter_invoked](std::string_view)
+        {
+            getter_invoked = true;
+            return std::optional<std::string>{};
+        }), std::exception);
+    EXPECT_FALSE(getter_invoked);
+
+    const std::vector<Hermit::value_type> invalid_setenv_arguments{ std::string{ "NAME" }, 7 };
+    const Hermit::builtin::macro_argument_type invalid_setenv_args{ invalid_setenv_arguments, cfg, ctx };
+    bool setter_invoked{};
+    EXPECT_THROW(Hermit::builtin::setenv(invalid_setenv_args,
+        [&setter_invoked](std::string_view, std::string_view)
+        {
+            setter_invoked = true;
+            return true;
+        }), std::exception);
+    EXPECT_FALSE(setter_invoked);
+
+    const std::vector<Hermit::value_type> invalid_exec_arguments{ 7 };
+    const Hermit::builtin::macro_argument_type invalid_exec_args{ invalid_exec_arguments, cfg, ctx };
+    bool runner_invoked{};
+    EXPECT_THROW(Hermit::builtin::exec(invalid_exec_args,
+        [&runner_invoked](std::string_view, const std::vector<std::string>&)
+        {
+            runner_invoked = true;
+            return std::pair<int, std::string>{};
+        }), std::exception);
+    EXPECT_FALSE(runner_invoked);
+
+    const std::vector<Hermit::value_type> invalid_path_arguments{ 7 };
+    const Hermit::builtin::macro_argument_type invalid_path_args{ invalid_path_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::parent(invalid_path_args), std::exception);
+
+    const std::vector<Hermit::value_type> invalid_json_arguments{ 7 };
+    const Hermit::builtin::macro_argument_type invalid_json_args{ invalid_json_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::json_literal(invalid_json_args), std::exception);
+
+    const std::vector<Hermit::value_type> invalid_code_block_arguments{ 7, std::string{ "cpp" } };
+    const Hermit::builtin::macro_argument_type invalid_code_block_args{ invalid_code_block_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::code_block(invalid_code_block_args), std::exception);
+
+    const Hermit::public_api::http_executor executor{ [&runner_invoked](const Hermit::public_api::http_request_data&)
+    {
+        runner_invoked = true;
+        return Hermit::public_api::http_response_data{};
+    } };
+    const std::vector<Hermit::value_type> invalid_generated_arguments{ 7 };
+    const Hermit::builtin::macro_argument_type invalid_generated_args{ invalid_generated_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::generated(invalid_generated_args, executor), std::exception);
+    EXPECT_FALSE(runner_invoked);
+
+    const std::vector<Hermit::value_type> invalid_summary_arguments{ std::string{ "prompt" }, 7, 5 };
+    const Hermit::builtin::macro_argument_type invalid_summary_args{ invalid_summary_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::summary(invalid_summary_args, executor), std::exception);
+    EXPECT_FALSE(runner_invoked);
 }
 
 TEST(builtin, escapes_json_and_extracts_named_code_blocks)
@@ -269,6 +512,44 @@ TEST(builtin, supports_partial_random_bounds_and_non_string_choice_values)
     const std::vector<Hermit::value_type> choice_arguments{ 11, true };
     const Hermit::builtin::macro_argument_type choice_args{ choice_arguments, cfg, ctx };
     EXPECT_EQ(Hermit::value_to_string(Hermit::builtin::choice(choice_args, [](std::int64_t, std::int64_t) { return std::int64_t{ 1 }; })), "1");
+}
+
+TEST(builtin, rejects_injected_random_results_outside_requested_bounds)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const std::vector<Hermit::value_type> random_arguments{ 2, 4 };
+    const Hermit::builtin::macro_argument_type random_args{ random_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::random(random_args, [](std::int64_t, std::int64_t) { return std::int64_t{ 5 }; }), std::exception);
+
+    const std::vector<Hermit::value_type> choice_arguments{ std::string{ "only" } };
+    const Hermit::builtin::macro_argument_type choice_args{ choice_arguments, cfg, ctx };
+    EXPECT_THROW(Hermit::builtin::choice(choice_args, [](std::int64_t, std::int64_t) { return std::int64_t{ 1 }; }), std::exception);
+
+    const std::vector<Hermit::value_type> reversed_arguments{ 5, 2 };
+    const Hermit::builtin::macro_argument_type reversed_args{ reversed_arguments, cfg, ctx };
+    bool source_invoked{};
+    EXPECT_THROW(Hermit::builtin::random(reversed_args, [&source_invoked](std::int64_t, std::int64_t) {
+        source_invoked = true;
+        return std::int64_t{ 3 };
+    }), std::exception);
+    EXPECT_FALSE(source_invoked);
+}
+
+TEST(builtin, propagates_injected_process_runner_failure_without_changing_exit_code)
+{
+    Hermit::config cfg;
+    cfg.allow_process_exec = true;
+    Hermit::context ctx;
+    ctx.set("exit_code", 3);
+    const std::vector<Hermit::value_type> arguments{ std::string{ "tool" } };
+    const Hermit::builtin::macro_argument_type macro_args{ arguments, cfg, ctx };
+
+    EXPECT_THROW(Hermit::builtin::exec(macro_args, [](std::string_view, const std::vector<std::string>&) -> std::pair<int, std::string> {
+        throw std::runtime_error{ "runner failed" };
+    }), std::runtime_error);
+    ASSERT_NE(ctx.get("exit_code"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("exit_code")), "3");
 }
 
 TEST(builtin, truncates_head_tail_macros_using_cached_token_counts)

@@ -5,6 +5,8 @@
 #include <string_view>
 #include <vector>
 
+#include "Hermit_filesystem.hpp"
+
 namespace Hermit
 {
     struct config;
@@ -13,6 +15,7 @@ namespace Hermit
         std::string base64_image;
         std::string mime_type;
         static image_info_type from_file(std::string_view path, const config& cfg);
+        static image_info_type from_file(std::string_view path, const config& cfg, const filesystem::file_reader& reader);
     };
     struct sb_parameters
     {
@@ -33,7 +36,9 @@ namespace Hermit
     struct cu_parameters
     {
         std::string host, port, prompt_target, upload_image_target;
-        std::string prompt, prompt_file, output_directory;
+        std::string api_action, api_options, api_prompt_id, api_node_class, api_model_folder, api_metadata_folder, client_id;
+        int event_count{};
+        std::string prompt, prompt_file, output_directory, upload_file;
         std::vector<std::string> upload_images;
         bool preserve_subdirectories{};
     };

@@ -8,6 +8,7 @@
 #include <boost/multi_index/member.hpp>
 #include <boost/multi_index/sequenced_index.hpp>
 #include "Hermit_context.hpp"
+#include "Hermit_filesystem.hpp"
 
 namespace Hermit
 {
@@ -35,7 +36,9 @@ namespace Hermit
         lru_cache& operator=(lru_cache&&) = default;
         int get_tokens(std::string_view str);
         void to_file(const config& cfg) const;
+        void to_file(const config& cfg, const filesystem::file_writer& writer) const;
         void from_file(const config& cfg);
+        void from_file(const config& cfg, const filesystem::file_reader& reader);
     private:
         callback_type callback;
     };

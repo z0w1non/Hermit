@@ -112,6 +112,7 @@ namespace Hermit
     struct tg_parameters
         : llm_backend_parameters
     {
+        bool openai_compatible{};
         tg_common_parameters common{};
         tg_completions_parameters completions{};
         tg_chat_completions_parameters chat_completions{};
@@ -210,6 +211,8 @@ namespace Hermit
     struct kc_parameters
         : llm_backend_parameters
     {
+        bool ollama_compatible{};
+        std::string model;
         kc_common_parameters common{};
         kc_completions_parameters completions{};
         kc_chat_completions_parameters chat_completions{};

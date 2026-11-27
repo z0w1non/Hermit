@@ -1,31 +1,71 @@
-#include "Hermit_runtime.hpp"
-#include "Hermit_config.hpp"
-#include "Hermit_filesystem.hpp"
-#include "Hermit_builtin.hpp"
-#include "Hermit_llm.hpp"
-#include "Hermit_generation.hpp"
-#include "Hermit_command_line.hpp"
-#include "Hermit_png.hpp"
-#include "Hermit_log.hpp"
-#include "Hermit_lru.hpp"
+#include <chrono>
+#include <iostream>
+#include <random>
 
 #include <boost/exception/diagnostic_information.hpp>
 #include <boost/nowide/args.hpp>
 #include <boost/nowide/iostream.hpp>
 
-#include <random>
-#include <iostream>
+#include "Hermit_builtin.hpp"
+#include "Hermit_command_line.hpp"
+#include "Hermit_config.hpp"
+#include "Hermit_filesystem.hpp"
+#include "Hermit_generation.hpp"
+#include "Hermit_llm.hpp"
+#include "Hermit_log.hpp"
+#include "Hermit_lru.hpp"
+#include "Hermit_png.hpp"
+#include "Hermit_public_http_adapter.hpp"
+#include "Hermit_runtime.hpp"
 
 namespace Hermit
 {
-    void generate_and_output(const config& cfg)
+    static bool is_llm_backend(command_mode mode)
     {
-        if (cfg.command_mode == command_mode::tg || cfg.command_mode == command_mode::kc)
+        return mode == command_mode::tg || mode == command_mode::kc || mode == command_mode::lmstudio
+            || mode == command_mode::llama_cpp || mode == command_mode::vllm || mode == command_mode::ollama;
+    }
+
+    static void generate_and_output_impl(const config& cfg, const filesystem::file_writer* writer,
+        const tcp::request_executor* tcp_executor, const public_api::http_executor* http_executor,
+        const filesystem::file_reader* reader)
+    {
+        if (is_llm_backend(cfg.command_mode))
         {
             const std::string prompt{ filesystem::prompt_from_string_or_file_path(cfg.llm.prompt, cfg.llm.prompt_file, cfg) };
-            if (cfg.llm.mode == llm_mode::completions)
+            if (cfg.llm.mode == llm_mode::completions && writer)
+            {
+                if (http_executor)
+                {
+                    llm::completions_and_write_file(cfg, prompt, cfg.ctx, *writer, *http_executor);
+                }
+                else if (tcp_executor)
+                {
+                    llm::completions_and_write_file(cfg, prompt, cfg.ctx, *writer, *tcp_executor);
+                }
+                else
+                {
+                    llm::completions_and_write_file(cfg, prompt, cfg.ctx, *writer);
+                }
+            }
+            else if (cfg.llm.mode == llm_mode::completions)
             {
                 llm::completions_and_write_file(cfg, prompt, cfg.ctx);
+            }
+            else if (cfg.llm.mode == llm_mode::chat_completions && writer)
+            {
+                if (http_executor)
+                {
+                    llm::chat_completions_and_write_file(cfg, prompt, cfg.ctx, *writer, *http_executor, *reader);
+                }
+                else if (tcp_executor)
+                {
+                    llm::chat_completions_and_write_file(cfg, prompt, cfg.ctx, *writer, *tcp_executor, *reader);
+                }
+                else
+                {
+                    llm::chat_completions_and_write_file(cfg, prompt, cfg.ctx, *writer);
+                }
             }
             else if (cfg.llm.mode == llm_mode::chat_completions)
             {
@@ -36,20 +76,84 @@ namespace Hermit
         {
             const std::string prompt_string{ expand_macro(filesystem::prompt_from_string_or_file_path(cfg.sd.common.prompt, cfg.sd.prompt_file, cfg), cfg, cfg.ctx) };
             const std::string negative_prompt_string{ expand_macro(filesystem::prompt_from_string_or_file_path(cfg.sd.common.negative_prompt, cfg.sd.negative_prompt_file, cfg), cfg, cfg.ctx) };
-            const std::string image{ sd::send_request(cfg, prompt_string, negative_prompt_string) };
-            filesystem::write_file(cfg, image, cfg.sd.output_file, std::ios::binary);
+            const std::string image{ http_executor
+                ? sd::send_request(cfg, prompt_string, negative_prompt_string, *http_executor, *reader)
+                : tcp_executor ? sd::send_request(cfg, prompt_string, negative_prompt_string, *tcp_executor, *reader)
+                : sd::send_request(cfg, prompt_string, negative_prompt_string) };
+            if (writer)
+            {
+                filesystem::write_file(cfg, image, cfg.sd.output_file, std::ios::binary, *writer);
+            }
+            else
+            {
+                filesystem::write_file(cfg, image, cfg.sd.output_file, std::ios::binary);
+            }
         }
         else if (cfg.command_mode == command_mode::sb)
         {
             const std::string text{ expand_macro(filesystem::prompt_from_string_or_file_path(cfg.sb.text, cfg.sb.text_file, cfg), cfg, cfg.ctx) };
-            const std::string voice{ sb::send_request(cfg, text) };
-            filesystem::write_file(cfg, voice, cfg.sb.output_file, std::ios::binary);
+            const std::string voice{ http_executor
+                ? sb::send_request(cfg, text, *http_executor)
+                : tcp_executor ? sb::send_request(cfg, text, *tcp_executor)
+                : sb::send_request(cfg, text) };
+            if (writer)
+            {
+                filesystem::write_file(cfg, voice, cfg.sb.output_file, std::ios::binary, *writer);
+            }
+            else
+            {
+                filesystem::write_file(cfg, voice, cfg.sb.output_file, std::ios::binary);
+            }
         }
         else if (cfg.command_mode == command_mode::cu)
         {
             const std::string prompt{ expand_macro(filesystem::prompt_from_string_or_file_path(cfg.cu.prompt, cfg.cu.prompt_file, cfg), cfg, cfg.ctx) };
-            cu::send_request(cfg, prompt);
+            if (writer)
+            {
+                const public_api::binary_storage storage{ [&cfg, writer](std::string_view path, std::string_view data)
+                {
+                    filesystem::write_file(cfg, data, path, std::ios::binary, *writer);
+                } };
+                if (http_executor)
+                {
+                    cu::send_request(cfg, prompt, *http_executor, storage);
+                }
+                else if (tcp_executor)
+                {
+                    cu::send_request(cfg, prompt, *tcp_executor, storage);
+                }
+                else
+                {
+                    cu::send_request(cfg, prompt, storage);
+                }
+            }
+            else
+            {
+                cu::send_request(cfg, prompt);
+            }
         }
+    }
+
+    void generate_and_output(const config& cfg)
+    {
+        generate_and_output_impl(cfg, nullptr, nullptr, nullptr, nullptr);
+    }
+
+    void generate_and_output(const config& cfg, const filesystem::file_writer& writer)
+    {
+        generate_and_output_impl(cfg, &writer, nullptr, nullptr, nullptr);
+    }
+
+    void generate_and_output(const config& cfg, const filesystem::file_writer& writer,
+        const public_api::http_executor& executor, const filesystem::file_reader& reader)
+    {
+        generate_and_output_impl(cfg, &writer, nullptr, &executor, &reader);
+    }
+
+    void generate_and_output(const config& cfg, const filesystem::file_writer& writer,
+        const tcp::request_executor& executor, const filesystem::file_reader& reader)
+    {
+        generate_and_output_impl(cfg, &writer, &executor, nullptr, &reader);
     }
 
     void set_seed(config& cfg)
@@ -73,10 +177,18 @@ namespace Hermit
 
     void create_process(const config& cfg)
     {
+        create_process(cfg, [](std::string_view executable_file, const std::vector<std::string>& arguments)
+        {
+            create_process_async(executable_file, arguments);
+        });
+    }
+
+    void create_process(const config& cfg, const process_launcher& launcher)
+    {
         if (!cfg.proc.server_executable_file.empty())
         {
             const std::vector<std::string> arguments{ command_line::split_command_line_args(cfg.proc.server_arguments) };
-            create_process_async(cfg.proc.server_executable_file, arguments);
+            create_process_async(cfg.proc.server_executable_file, arguments, launcher);
             if (!wait_for_port(cfg.proc.server_host, cfg.proc.server_port, cfg.proc.server_max_retries, cfg.proc.server_wait_ms))
             {
                 HERMIT_LOG(warning) << "Connection timed out waiting for server response.";
@@ -88,16 +200,25 @@ namespace Hermit
     {
         if (!cfg.proc.server_executable_file.empty())
         {
-            if (terminate_process_by_path(cfg.proc.server_executable_file) == 0)
+            if (terminate_process(cfg, [](const std::filesystem::path& executable_file_path)
+                {
+                    return terminate_process_by_path(executable_file_path);
+                }) == 0)
             {
                 HERMIT_LOG(warning) << "Failed to terminate process by executable file path (" << cfg.proc.server_executable_file << ").";
             }
         }
     }
 
+    std::size_t terminate_process(const config& cfg, const process_terminator& terminator)
+    {
+        if (cfg.proc.server_executable_file.empty()) return 0;
+        return terminator(cfg.proc.server_executable_file);
+    }
+
     void iterate(config& cfg)
     {
-        if (cfg.command_mode == command_mode::tg || cfg.command_mode == command_mode::kc)
+        if (is_llm_backend(cfg.command_mode))
         {
             cfg.lru_cache.from_file(cfg);
         }
@@ -115,7 +236,7 @@ namespace Hermit
                 generate_and_output(cfg);
             }
 
-            if (cfg.command_mode == command_mode::tg || cfg.command_mode == command_mode::kc)
+            if (is_llm_backend(cfg.command_mode))
             {
                 cfg.lru_cache.to_file(cfg);
             }
@@ -139,6 +260,44 @@ namespace Hermit
             }
             command_line::after_parse(cfg);
 
+            if (cfg.command_mode == command_mode::list_models || cfg.command_mode == command_mode::list_running_models
+                || cfg.command_mode == command_mode::get_ollama_version || cfg.command_mode == command_mode::manage_comfyui_api
+                || cfg.command_mode == command_mode::show_model || cfg.command_mode == command_mode::manage_ollama_model
+                || cfg.command_mode == command_mode::create_embeddings
+                || cfg.command_mode == command_mode::tokenize || cfg.command_mode == command_mode::detokenize)
+            {
+                if (cfg.command_mode == command_mode::manage_comfyui_api && cfg.cu.api_action == "events")
+                {
+                    cu::receive_events(cfg);
+                    return 0;
+                }
+                tcp transport;
+                const public_api::http_executor executor{ public_api::make_http_executor(
+                    [&transport, &cfg](std::string_view host, std::string_view port, const tcp::request_type& request)
+                    {
+                        transport.expires_after(std::chrono::seconds{ cfg.timeout_connect }).connect(host, port);
+                        return transport.expires_after(std::chrono::seconds{ cfg.timeout_request }).request(request);
+                    }) };
+                const std::string response{ cfg.command_mode == command_mode::list_models ? llm::list_models(cfg, executor)
+                    : cfg.command_mode == command_mode::list_running_models ? llm::list_running_models(cfg, executor)
+                    : cfg.command_mode == command_mode::get_ollama_version ? llm::get_ollama_version(cfg, executor)
+                    : cfg.command_mode == command_mode::show_model ? llm::show_model(cfg, executor)
+                    : cfg.command_mode == command_mode::manage_ollama_model ? llm::manage_ollama_model(cfg, executor)
+                    : cfg.command_mode == command_mode::manage_comfyui_api ? cu::manage_api(cfg, executor)
+                    : cfg.command_mode == command_mode::create_embeddings ? llm::create_embeddings(cfg, executor)
+                    : cfg.command_mode == command_mode::tokenize ? llm::tokenize(cfg, executor) : llm::detokenize(cfg, executor) };
+                if (cfg.command_mode == command_mode::manage_comfyui_api && cu::api_returns_binary(cfg.cu))
+                {
+                    boost::nowide::cout.write(response.data(), static_cast<std::streamsize>(response.size()));
+                    boost::nowide::cout.flush();
+                }
+                else
+                {
+                    boost::nowide::cout << response << '\n' << std::flush;
+                }
+                return 0;
+            }
+
             if (cfg.command_mode == command_mode::extract_png_parameters)
             {
                 const std::string parameters{ tEXt::extract_parameters(filesystem::read_binary_file_to_string(cfg.png.png_file, cfg)) };
@@ -156,7 +315,7 @@ namespace Hermit
                 return 0;
             }
 
-            if (cfg.command_mode == command_mode::tg || cfg.command_mode == command_mode::kc)
+            if (is_llm_backend(cfg.command_mode))
             {
                 llm::read_paragraphs_file(cfg);
             }

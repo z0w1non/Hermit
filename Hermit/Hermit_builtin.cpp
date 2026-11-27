@@ -1,13 +1,6 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include "Hermit_builtin.hpp"
-#include "Hermit_config.hpp"
-#include "Hermit_filesystem.hpp"
-#include "Hermit_string_utils.hpp"
-#include "Hermit_templates.hpp"
-#include "Hermit_errors.hpp"
-
 #include <cstdint>
 #include <filesystem>
 #include <iterator>
@@ -17,6 +10,13 @@
 #include <string>
 
 #include <boost/lexical_cast.hpp>
+
+#include "Hermit_builtin.hpp"
+#include "Hermit_config.hpp"
+#include "Hermit_errors.hpp"
+#include "Hermit_filesystem.hpp"
+#include "Hermit_string_utils.hpp"
+#include "Hermit_templates.hpp"
 
 namespace Hermit
 {
@@ -53,9 +53,17 @@ namespace Hermit
 
         value_type file(macro_argument_type args)
         {
+            return file(args, [](std::string_view filename, const config& cfg)
+            {
+                return filesystem::read_text_file_to_string(filename, cfg);
+            });
+        }
+
+        value_type file(macro_argument_type args, const text_file_reader& reader)
+        {
             validate_arguments_size(args.arguments, 1, 1);
             const std::string_view filename{ get_or_throw<std::string>(args.arguments[0]) };
-            return filesystem::read_text_file_to_string(filename, args.cfg);
+            return reader(filename, args.cfg);
         }
 
         value_type head(macro_argument_type args)
@@ -117,8 +125,17 @@ namespace Hermit
 
             const std::int64_t min{ optional_min ? *optional_min : 0 };
             const std::int64_t max{ optional_max ? *optional_max : static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()) };
+            if (min > max)
+            {
+                Hermit::throw_exception(macro_exception{} << error_info::description{ "Random range minimum exceeds its maximum" });
+            }
 
-            return std::to_string(source(min, max));
+            const std::int64_t result{ source(min, max) };
+            if (result < min || result > max)
+            {
+                Hermit::throw_exception(macro_exception{} << error_info::description{ "Random source returned a value outside the requested range" });
+            }
+            return std::to_string(result);
         }
 
         value_type choice(macro_argument_type args)
@@ -133,7 +150,12 @@ namespace Hermit
         value_type choice(macro_argument_type args, const random_source& source)
         {
             validate_arguments_size(args.arguments, 1);
-            const std::int64_t index{ source(0, static_cast<std::int64_t>(args.arguments.size() - 1)) };
+            const std::int64_t max{ static_cast<std::int64_t>(args.arguments.size() - 1) };
+            const std::int64_t index{ source(0, max) };
+            if (index < 0 || index > max)
+            {
+                Hermit::throw_exception(macro_exception{} << error_info::description{ "Random source returned a choice index outside the requested range" });
+            }
             return args.arguments[static_cast<std::size_t>(index)];
         }
 

@@ -188,6 +188,7 @@
     <ClInclude Include="Hermit_runtime.hpp" />
     <ClInclude Include="Hermit_core.hpp" />
     <ClInclude Include="Hermit_log.hpp" />
+    <ClInclude Include="Hermit_log_types.hpp" />
     <ClInclude Include="Hermit_generation.hpp" />
     <ClInclude Include="Hermit_llm.hpp" />
     <ClInclude Include="Hermit_http.hpp" />
@@ -197,7 +198,9 @@
     <ClInclude Include="Hermit_app_types.hpp" />
     <ClInclude Include="Hermit_sd_config.hpp" />
     <ClInclude Include="Hermit_parser.hpp" />
-    <ClInclude Include="Hermit_parser_impl.hpp" />
+    <ClInclude Include="Hermit_parser_grammar_impl.hpp" />
+    <ClInclude Include="Hermit_parser_visitor_impl.hpp" />
+    <ClInclude Include="Hermit_parser_evaluation_internal.hpp" />
     <ClInclude Include="Hermit_parser_types.hpp" />
     <ClInclude Include="Hermit_lru.hpp" />
     <ClInclude Include="Hermit_lru_impl.hpp" />

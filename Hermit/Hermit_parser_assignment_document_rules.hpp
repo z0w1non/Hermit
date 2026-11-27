@@ -20,6 +20,7 @@ namespace Hermit::parser
         skipped_rule<std::vector<statement_type>()> statements;
         skipped_rule<expression_statement_type()> expression_statement;
         skipped_rule<assignment_statement_type()> assignment_statement;
+        skipped_rule<simple_assignment_statement_type()> simple_assignment_statement;
         skipped_rule<compound_statement_type()> compound_statement;
         skipped_rule<if_statement_type()> if_statement;
         skipped_rule<while_statement_type()> while_statement;

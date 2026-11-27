@@ -1,3 +1,7 @@
+#include <filesystem>
+#include <ios>
+#include <string>
+
 #include <gtest/gtest.h>
 
 #include "Hermit_llm.hpp"
@@ -29,6 +33,26 @@ TEST(llm, parses_item_list_with_nested_descriptions)
     ASSERT_EQ(items[0].descriptions.size(), 2U);
     EXPECT_EQ(items[0].descriptions[1], "detail two");
     EXPECT_EQ(items[1].head, "second");
+}
+
+TEST(llm, sends_named_code_blocks_to_injected_writer)
+{
+    Hermit::config cfg;
+    cfg.base_path = "output";
+    cfg.llm.code_block_extract = true;
+    std::filesystem::path written_path;
+    std::string written_data;
+    const Hermit::filesystem::file_writer writer{ [&written_path, &written_data](const std::filesystem::path& path,
+        const char* data, std::size_t size, std::ios_base::openmode)
+    {
+        written_path = path;
+        written_data.assign(data, size);
+    } };
+
+    Hermit::llm::write_code_block(cfg, "```cpp\nint main() {}\n```", writer);
+
+    EXPECT_EQ(written_path, std::filesystem::path{ "output/cpp.cpp" });
+    EXPECT_EQ(written_data, "int main() {}\n");
 }
 
 TEST(llm, injects_request_executor_for_completions)

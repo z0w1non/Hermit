@@ -1,4 +1,5 @@
 #include "Hermit_builtin.hpp"
+#include "Hermit_config.hpp"
 #include "Hermit_errors.hpp"
 #include "Hermit_string_utils.hpp"
 #include "Hermit_templates.hpp"
@@ -47,6 +48,12 @@ namespace Hermit::builtin
     value_type exec(macro_argument_type args, const process_runner& runner)
     {
         builtin::validate_arguments_size(args.arguments, 1);
+        if (!args.cfg.allow_process_exec)
+        {
+            Hermit::throw_exception(macro_exception{} << error_info::description{
+                "Process execution from the exec macro is disabled; enable --security.allow-process-exec to allow it"
+            });
+        }
         const std::string_view exe_name{ get_or_throw<std::string>(args.arguments[0]) };
         std::vector<std::string> args_;
         args_.reserve(args.arguments.size());

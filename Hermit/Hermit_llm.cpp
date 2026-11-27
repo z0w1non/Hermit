@@ -1,22 +1,3 @@
-#include "Hermit_llm.hpp"
-#include "Hermit_public_http_adapter.hpp"
-#include "Hermit_config.hpp"
-#include "Hermit_filesystem.hpp"
-#include "Hermit_builtin.hpp"
-#include "Hermit_string_utils.hpp"
-#include "Hermit_tcp.hpp"
-#include "Hermit_log.hpp"
-#include "Hermit_errors.hpp"
-#include "Hermit_runtime.hpp"
-#include "Hermit_templates.hpp"
-
-#include <boost/algorithm/string.hpp>
-#include <boost/beast/core.hpp>
-#include <boost/beast/http.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/nowide/iostream.hpp>
-
-#include "nlohmann/json.hpp"
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -24,11 +5,243 @@
 #include <iomanip>
 #include <regex>
 #include <sstream>
+#include <utility>
+
+#include <boost/algorithm/string.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
+#include <boost/nowide/iostream.hpp>
+#include "nlohmann/json.hpp"
+
+#include "Hermit_builtin.hpp"
+#include "Hermit_config.hpp"
+#include "Hermit_errors.hpp"
+#include "Hermit_filesystem.hpp"
+#include "Hermit_llm.hpp"
+#include "Hermit_log.hpp"
+#include "Hermit_public_http_adapter.hpp"
+#include "Hermit_runtime.hpp"
+#include "Hermit_string_utils.hpp"
+#include "Hermit_tcp.hpp"
+#include "Hermit_templates.hpp"
 
 namespace Hermit
 {
     namespace llm
     {
+        std::string list_models(const config& cfg, const public_api::http_executor& executor)
+        {
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, cfg.llm.models_target, {}, std::move(options)) };
+            request.method = public_api::http_method::get;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string list_running_models(const config& cfg, const public_api::http_executor& executor)
+        {
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, cfg.llm.running_models_target, {}, std::move(options)) };
+            request.method = public_api::http_method::get;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string get_ollama_version(const config& cfg, const public_api::http_executor& executor)
+        {
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/api/version", {}, std::move(options)) };
+            request.method = public_api::http_method::get;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string show_model(const config& cfg, const public_api::http_executor& executor)
+        {
+            if (cfg.llm.model.empty())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{ "models show requires --llm.model" });
+            }
+            nlohmann::json body{ { "model", cfg.llm.model } };
+            if (!cfg.llm.model_info_options.empty())
+            {
+                const nlohmann::json extra_options{ nlohmann::json::parse(cfg.llm.model_info_options) };
+                if (!extra_options.is_object() || extra_options.contains("model"))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "--llm.model-info-options must be a JSON object without the reserved model field" });
+                }
+                body.update(extra_options);
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            const public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, cfg.llm.model_info_target, body.dump(), std::move(options)) };
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string manage_ollama_model(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.model_action_options) };
+            if (!body.is_object())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "--llm.model-action-options must be a JSON object" });
+            }
+
+            auto require_string = [&body](std::string_view key)
+            {
+                if (!body.contains(key) || !body.at(key).is_string() || body.at(key).get<std::string>().empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        std::string{ "model-action-options requires a non-empty string field: " } + std::string{ key } });
+                }
+            };
+
+            public_api::http_request_data request;
+            if (cfg.llm.model_action == "create")
+            {
+                require_string("model");
+                request = public_api::make_http_request_data(cfg.llm.host, cfg.llm.port, "/api/create", body.dump());
+            }
+            else if (cfg.llm.model_action == "copy")
+            {
+                require_string("source");
+                require_string("destination");
+                request = public_api::make_http_request_data(cfg.llm.host, cfg.llm.port, "/api/copy", body.dump());
+            }
+            else if (cfg.llm.model_action == "delete")
+            {
+                require_string("model");
+                request = public_api::make_http_request_data(cfg.llm.host, cfg.llm.port, "/api/delete", body.dump());
+                request.method = public_api::http_method::delete_;
+            }
+            else if (cfg.llm.model_action == "pull" || cfg.llm.model_action == "push")
+            {
+                require_string("model");
+                const std::string target{ cfg.llm.model_action_target.empty()
+                    ? cfg.llm.model_action == "pull" ? "/api/pull" : "/api/push"
+                    : cfg.llm.model_action_target };
+                request = public_api::make_http_request_data(cfg.llm.host, cfg.llm.port, target, body.dump());
+            }
+            else
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "unsupported Ollama model action: " + cfg.llm.model_action });
+            }
+
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            request.options = std::move(options);
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string create_embeddings(const config& cfg, const public_api::http_executor& executor)
+        {
+            if (cfg.llm.model.empty())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{ "embeddings create requires --llm.model" });
+            }
+
+            nlohmann::json input = cfg.llm.prompt;
+            if (!cfg.llm.embedding_inputs.empty()) input = nlohmann::json::array();
+            for (const std::string& text : cfg.llm.embedding_inputs) input.push_back(text);
+
+            nlohmann::json body
+            {
+                { "input", std::move(input) },
+                { "model", cfg.llm.model }
+            };
+            if (cfg.llm.backend_name != "ollama")
+            {
+                body["encoding_format"] = "float";
+            }
+            if (!cfg.llm.embedding_options.empty())
+            {
+                const nlohmann::json extra_options{ nlohmann::json::parse(cfg.llm.embedding_options) };
+                if (!extra_options.is_object() || extra_options.contains("input") || extra_options.contains("model"))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "--llm.embedding-options must be a JSON object without reserved input/model fields" });
+                }
+                body.update(extra_options);
+            }
+
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+
+            const public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, cfg.llm.embedding_target, body.dump(), std::move(options)) };
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string tokenize(const config& cfg, const public_api::http_executor& executor)
+        {
+            nlohmann::json body{ { "content", cfg.llm.prompt } };
+            if (!cfg.llm.tokenize_options.empty())
+            {
+                const nlohmann::json extra_options{ nlohmann::json::parse(cfg.llm.tokenize_options) };
+                if (!extra_options.is_object() || extra_options.contains("content"))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "--llm.tokenize-options must be a JSON object without the reserved content field" });
+                }
+                body.update(extra_options);
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            const public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, cfg.llm.tokenize_target, body.dump(), std::move(options)) };
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string detokenize(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ { "tokens", cfg.llm.token_ids } };
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            const public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, cfg.llm.detokenize_target, body.dump(), std::move(options)) };
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
         void read_paragraphs_file(config& cfg)
         {
             if (!cfg.llm.paragraphs_file.empty())
@@ -137,6 +350,7 @@ namespace Hermit
             request.prepare_payload();
 
             const tcp::response_type response{ executor(host, port, request) };
+            tcp::ensure_success(response);
             HERMIT_LOG(trace) << "Receive JSON\n```\n" << response.body() << "\n```";
 
             return params.parse_response_for_completions(response.body());
@@ -152,6 +366,7 @@ namespace Hermit
             const public_api::http_request_data request{ public_api::make_http_request_data(
                 cfg.llm.host, cfg.llm.port, cfg.llm.completions_target, body, std::move(options)) };
             const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
             return params.parse_response_for_completions(response.body);
         }
 
@@ -193,6 +408,7 @@ namespace Hermit
             request.prepare_payload();
 
             const tcp::response_type response{ executor(host, port, request) };
+            tcp::ensure_success(response);
             HERMIT_LOG(trace) << "Receive JSON\n```\n" << response.body() << "\n```";
 
             return params.parse_response_for_chat_completions(response.body());
@@ -208,17 +424,25 @@ namespace Hermit
             const public_api::http_request_data request{ public_api::make_http_request_data(
                 cfg.llm.host, cfg.llm.port, cfg.llm.chat_completions_target, body, std::move(options)) };
             const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
             return params.parse_response_for_chat_completions(response.body);
         }
 
-        std::string completions(const config& cfg, std::string_view prompt, const context& ctx)
+        static std::string completions_impl(const config& cfg, std::string_view prompt, const context& ctx,
+            const tcp::request_executor* tcp_executor, const public_api::http_executor* http_executor)
         {
             std::string expanded_prompt{ expand_macro(prompt, cfg, ctx) };
             const std::string expanded_prefix{ expand_macro(cfg.llm.generation_prefix, cfg, ctx) };
             const std::size_t initial_prompt_size{ expanded_prompt.size() };
             expanded_prompt += expanded_prefix;
 
-            const int initial_tokens{ send_token_count_request(cfg, expanded_prompt) };
+            const auto count_tokens = [&cfg, tcp_executor, http_executor](std::string_view value)
+            {
+                return http_executor ? send_token_count_request(cfg, value, *http_executor)
+                    : tcp_executor ? send_token_count_request(cfg, value, *tcp_executor)
+                    : Hermit::send_token_count_request(cfg, value);
+            };
+            const int initial_tokens{ count_tokens(expanded_prompt) };
 
             HERMIT_LOG(info) << "Prompt created.\n```\n" << expanded_prompt << "\n```";
 
@@ -248,7 +472,10 @@ namespace Hermit
                 }
 
                 const int max_tokens{ tokens_to_generate };
-                const std::string response{ send_completions_request(cfg, current_prompt, *cfg.llm.backend, max_tokens) };
+                const std::string response{ http_executor
+                    ? send_completions_request(cfg, current_prompt, *cfg.llm.backend, max_tokens, *http_executor)
+                    : tcp_executor ? send_completions_request(cfg, current_prompt, *cfg.llm.backend, max_tokens, *tcp_executor)
+                    : send_completions_request(cfg, current_prompt, *cfg.llm.backend, max_tokens) };
 
                 if (response.empty())
                 {
@@ -256,7 +483,7 @@ namespace Hermit
                 }
 
                 current_prompt += response;
-                current_tokens = send_token_count_request(cfg, current_prompt);
+                current_tokens = count_tokens(current_prompt);
             }
 
             std::string generated;
@@ -267,26 +494,92 @@ namespace Hermit
             return generated;
         }
 
+        std::string completions(const config& cfg, std::string_view prompt, const context& ctx)
+        {
+            return completions_impl(cfg, prompt, ctx, nullptr, nullptr);
+        }
+
+        std::string completions(const config& cfg, std::string_view prompt, const context& ctx,
+            const tcp::request_executor& executor)
+        {
+            return completions_impl(cfg, prompt, ctx, &executor, nullptr);
+        }
+
+        std::string completions(const config& cfg, std::string_view prompt, const context& ctx,
+            const public_api::http_executor& executor)
+        {
+            return completions_impl(cfg, prompt, ctx, nullptr, &executor);
+        }
+
         std::string chat_completions(const config& cfg, const context& ctx, const nlohmann::json& messages)
         {
             return send_chat_completions_request(cfg, *cfg.llm.backend, messages);
         }
 
-        void completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx)
+        static void completions_and_write_file_impl(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer* writer, const tcp::request_executor* tcp_executor,
+            const public_api::http_executor* http_executor)
         {
-            const std::string truncated_prompt{ string_utils::truncate_prompt_by_config(prompt, cfg) };
+            const auto count_tokens = [&cfg, tcp_executor, http_executor](std::string_view value)
+            {
+                return http_executor ? send_token_count_request(cfg, value, *http_executor)
+                    : tcp_executor ? send_token_count_request(cfg, value, *tcp_executor)
+                    : Hermit::send_token_count_request(cfg, value);
+            };
+            const std::string truncated_prompt{ http_executor || tcp_executor
+                ? string_utils::truncate_prompt_by_config(prompt, cfg, count_tokens)
+                : string_utils::truncate_prompt_by_config(prompt, cfg) };
 
-            std::string response{ completions(cfg, truncated_prompt, ctx) };
+            std::string response{ http_executor ? completions(cfg, truncated_prompt, ctx, *http_executor)
+                : tcp_executor ? completions(cfg, truncated_prompt, ctx, *tcp_executor)
+                : completions(cfg, truncated_prompt, ctx) };
             response = remove_reasoning(response, cfg.llm.reasoning_prefix, cfg.llm.reasoning_suffix);
 
-            filesystem::write_file(cfg, response, cfg.llm.output_file, std::ios_base::app);
+            if (writer)
+            {
+                filesystem::write_file(cfg, response, cfg.llm.output_file, std::ios_base::app, *writer);
+            }
+            else
+            {
+                filesystem::write_file(cfg, response, cfg.llm.output_file, std::ios_base::app);
+            }
 
             if (!cfg.verbose)
             {
                 boost::nowide::cout << response << std::flush;
             }
 
-            write_code_block(cfg, response);
+            if (writer)
+            {
+                write_code_block(cfg, response, *writer);
+            }
+            else
+            {
+                write_code_block(cfg, response);
+            }
+        }
+
+        void completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx)
+        {
+            completions_and_write_file_impl(cfg, prompt, ctx, nullptr, nullptr, nullptr);
+        }
+
+        void completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer& writer)
+        {
+            completions_and_write_file_impl(cfg, prompt, ctx, &writer, nullptr, nullptr);
+        }
+
+        void completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer& writer, const tcp::request_executor& executor)
+        {
+            completions_and_write_file_impl(cfg, prompt, ctx, &writer, &executor, nullptr);
+        }
+
+        void completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer& writer, const public_api::http_executor& executor)
+        {
+            completions_and_write_file_impl(cfg, prompt, ctx, &writer, nullptr, &executor);
         }
 
         std::string generate_uuid_v4()
@@ -312,7 +605,9 @@ namespace Hermit
             return oss.str();
         }
 
-        void chat_completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx)
+        static void chat_completions_and_write_file_impl(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer* writer, const public_api::http_executor* http_executor,
+            const tcp::request_executor* tcp_executor, const filesystem::file_reader* reader)
         {
             std::string chat_file_content;
             try
@@ -348,7 +643,9 @@ namespace Hermit
 
             if (!cfg.llm.image_file.empty())
             {
-                const image_info_type image_info{ image_info_type::from_file(cfg.llm.image_file, cfg) };
+                const image_info_type image_info{ reader
+                    ? image_info_type::from_file(cfg.llm.image_file, cfg, *reader)
+                    : image_info_type::from_file(cfg.llm.image_file, cfg) };
                 const std::string image_url{ filesystem::base64_image_to_url(image_info.base64_image, image_info.mime_type) };
                 content.push_back
                 (
@@ -369,7 +666,10 @@ namespace Hermit
 
             const std::string chat_filename{ cfg.llm.chat_file.empty() ? generate_chat_filename() : cfg.llm.chat_file };
 
-            const std::string response{ chat_completions(cfg, ctx, messages) };
+            const std::string response{ http_executor
+                ? send_chat_completions_request(cfg, *cfg.llm.backend, messages, *http_executor)
+                : tcp_executor ? send_chat_completions_request(cfg, *cfg.llm.backend, messages, *tcp_executor)
+                : chat_completions(cfg, ctx, messages) };
             messages.push_back
             (
                 {
@@ -378,19 +678,57 @@ namespace Hermit
                 }
             );
 
-            filesystem::write_file(cfg, messages.dump(), chat_filename);
-
-            filesystem::write_file(cfg, response, cfg.llm.output_file, std::ios_base::app);
+            if (writer)
+            {
+                filesystem::write_file(cfg, messages.dump(), chat_filename, 0, *writer);
+                filesystem::write_file(cfg, response, cfg.llm.output_file, std::ios_base::app, *writer);
+            }
+            else
+            {
+                filesystem::write_file(cfg, messages.dump(), chat_filename);
+                filesystem::write_file(cfg, response, cfg.llm.output_file, std::ios_base::app);
+            }
 
             if (!cfg.verbose)
             {
                 boost::nowide::cout << response << std::flush;
             }
 
-            write_code_block(cfg, response);
+            if (writer)
+            {
+                write_code_block(cfg, response, *writer);
+            }
+            else
+            {
+                write_code_block(cfg, response);
+            }
         }
 
-        void write_code_block(const config& cfg, std::string_view markdown)
+        void chat_completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx)
+        {
+            chat_completions_and_write_file_impl(cfg, prompt, ctx, nullptr, nullptr, nullptr, nullptr);
+        }
+
+        void chat_completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer& writer)
+        {
+            chat_completions_and_write_file_impl(cfg, prompt, ctx, &writer, nullptr, nullptr, nullptr);
+        }
+
+        void chat_completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer& writer, const public_api::http_executor& executor, const filesystem::file_reader& reader)
+        {
+            chat_completions_and_write_file_impl(cfg, prompt, ctx, &writer, &executor, nullptr, &reader);
+        }
+
+        void chat_completions_and_write_file(const config& cfg, std::string_view prompt, const context& ctx,
+            const filesystem::file_writer& writer, const tcp::request_executor& executor, const filesystem::file_reader& reader)
+        {
+            chat_completions_and_write_file_impl(cfg, prompt, ctx, &writer, nullptr, &executor, &reader);
+        }
+
+        static void write_code_block_impl(const config& cfg, std::string_view markdown,
+            const filesystem::file_writer* writer)
         {
             if (cfg.llm.code_block_extract)
             {
@@ -403,10 +741,27 @@ namespace Hermit
                     }
                     else
                     {
-                        filesystem::write_file(cfg, code, filesystem::complement_codeblock_extension(name), 0);
+                        if (writer)
+                        {
+                            filesystem::write_file(cfg, code, filesystem::complement_codeblock_extension(name), 0, *writer);
+                        }
+                        else
+                        {
+                            filesystem::write_file(cfg, code, filesystem::complement_codeblock_extension(name), 0);
+                        }
                     }
                 }
             }
+        }
+
+        void write_code_block(const config& cfg, std::string_view markdown)
+        {
+            write_code_block_impl(cfg, markdown, nullptr);
+        }
+
+        void write_code_block(const config& cfg, std::string_view markdown, const filesystem::file_writer& writer)
+        {
+            write_code_block_impl(cfg, markdown, &writer);
         }
 
         code_blocks extract_code_block_from_markdown(std::string_view markdown_content)

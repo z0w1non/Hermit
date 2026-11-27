@@ -5,6 +5,27 @@
 
 namespace Hermit::builtin
 {
+    namespace
+    {
+        value_type summary_impl(macro_argument_type args, const public_api::http_executor* executor)
+        {
+            builtin::validate_arguments_size(args.arguments, 3, 3);
+            const std::string_view prompt{ get_or_throw<std::string>(args.arguments[0]) };
+            const std::string& target{ get_or_throw<std::string>(args.arguments[1]) };
+            const int max_tokens{ get_or_throw<int>(args.arguments[2]) };
+
+            context pushed{ args.ctx.make_pushed() };
+            pushed.set("target", target);
+            pushed.set("max_tokens", max_tokens);
+            std::string output{ executor
+                ? llm::completions(args.cfg, prompt, pushed, *executor)
+                : llm::completions(args.cfg, prompt, pushed) };
+            output = llm::remove_reasoning(output, args.cfg.llm.reasoning_prefix, args.cfg.llm.reasoning_suffix);
+            const token_count_string truncated{ string_utils::truncate_by_tokens(output, max_tokens, args.cfg, false) };
+            return truncated.str;
+        }
+    }
+
     value_type code_block(macro_argument_type args)
     {
         builtin::validate_arguments_size(args.arguments, 2, 2);
@@ -27,18 +48,22 @@ namespace Hermit::builtin
         return llm::completions(args.cfg, prompt, pushed);
     }
 
-    value_type summary(macro_argument_type args)
+    value_type generated(macro_argument_type args, const public_api::http_executor& executor)
     {
-        builtin::validate_arguments_size(args.arguments, 3, 3);
+        builtin::validate_arguments_size(args.arguments, 1);
         const std::string_view prompt{ get_or_throw<std::string>(args.arguments[0]) };
-        const std::string& target{ get_or_throw<std::string>(args.arguments[1]) };
-        const int max_tokens{ get_or_throw<int>(args.arguments[2]) };
 
         context pushed{ args.ctx.make_pushed() };
-        pushed.set("target", target);
-        std::string output{ llm::completions(args.cfg, prompt, pushed) };
-        output = llm::remove_reasoning(output, args.cfg.llm.reasoning_prefix, args.cfg.llm.reasoning_suffix);
-        const token_count_string truncated{ string_utils::truncate_by_tokens(output, max_tokens, args.cfg, false) };
-        return truncated.str;
+        return llm::completions(args.cfg, prompt, pushed, executor);
+    }
+
+    value_type summary(macro_argument_type args)
+    {
+        return summary_impl(args, nullptr);
+    }
+
+    value_type summary(macro_argument_type args, const public_api::http_executor& executor)
+    {
+        return summary_impl(args, &executor);
     }
 }

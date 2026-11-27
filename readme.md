@@ -1,503 +1,300 @@
 # Hermit
 
-## 概要
-Hermit は、生成AIによりテキスト・画像・音声を生成する作業を一元管理・自動化し支援する、ローカル環境で動作可能な CLI のフロントエンドである。
+Hermit は、Windows 上で動作する C++20 の CLI アプリケーションです。テキスト・画像・音声の生成バックエンドをコマンドラインから利用し、プロンプトのテンプレート展開、反復実行、生成結果の保存を行います。
 
-* 想定するバックエンド
-	* テキスト生成
-		* lostruins/koboldcpp (https://github.com/lostruins/koboldcpp)
-		* oobabooga/text-generation-webui (https://github.com/oobabooga/text-generation-webui)
-	* 画像生成
-		* AUTOMATIC1111/stable-diffusion-webui (https://github.com/AUTOMATIC1111/stable-diffusion-webui)
-	* 音声生成
-		* litagin02/Style-Bert-VITS2 (https://github.com/litagin02/Style-Bert-VITS2)
+対象バックエンドは [text-generation-webui](https://github.com/oobabooga/text-generation-webui)、[KoboldCpp](https://github.com/LostRuins/koboldcpp)、[AUTOMATIC1111 Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)、[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)、[ComfyUI](https://github.com/Comfy-Org/ComfyUI)、[LM Studio](https://lmstudio.ai/)、[llama.cpp server](https://github.com/ggml-org/llama.cpp/tree/master/tools/server)、[vLLM](https://github.com/vllm-project/vllm)、[Ollama](https://ollama.com/) です。Hermit が各バックエンドの全 API を扱えるわけではありません。対応操作と未対応範囲は [バックエンド API 対応表](docs/BACKEND_WEB_API_COVERAGE.md) で管理しています。
 
-複数の生成 AI のバックエンドが提供する GUI を手動で操作する手間から解放し、生成する対象に依存しない統一的なインターフェースを提供し、創作活動を支援する。
+## 主な機能
 
-## 機能
-* Boost.Spirit Qi の文法と評価エンジンを備えたテンプレート言語により、式・代入・条件分岐などの動的な処理を実行できる。
-* ネットワーク通信(HTTP/HTTPS(POST/GET)、WebSocket)、JSON 解析、プロセス制御、文字列構文解析、Base64エンコード・デコード、URLエンコード、リクエスト構築、レスポンス解析など、多岐にわたる付随的な処理を代替し、開発者が本質的な創作活動に注力できるようにする。
-* プロンプトによりプロンプトを作成し再帰的に実行するような、高度に抽象化された生成ツールチェーンの構築を容易にする。
-* 生成されたテキストからMarkdownのコードブロックを抽出して任意の複数のファイルに分割して管理し、プロンプトの構成要素として再利用する。(コードブロックによるファイル分割、 `file` マクロ)
-* 小説の執筆のように、過去に生成されたテキストが蓄積し肥大化する作業において、有限で貧弱なコンテキストに収まるようプロンプトを構成する。(`head`, `tail`, `head_tail` マクロ)
-* 思考過程や対話の話者切り替え、段落ごとの段階的生成など、テキストを生成する工程を自然言語による記述で構造化する。(`phase` マクロ)
-* ユーザーによりカスタマイズされた処理による実行時例外を含む例外発生時に、自動でスタックトレースやソースコード位置情報など、デバッグに有益な情報を重要度に応じてフィルタリング可能な形態でログ出力する、堅牢なエラーハンドリング機構を提供する。
-* LLM のトークナイザーが通信により返したトークン数の情報をローカルに LRU キャッシュし、O(1) で高速に再利用する。
-* 主に Windows 環境のように UTF-8 をターミナルの標準のコードページとして採用していない OS 環境に対して、文字コードを UTF-8 に統一して扱う。
-* VRAM 容量の制限に起因して同時に複数のサーバーを起動することができないローカル環境にて、統一的な方法で各サーバーを起動・通信待機・終了する。
+- `tg` / `kc`、OpenAI 互換 API を持つ `lmstudio` / `llama-cpp` / `vllm`、Ollama 独自 API の `ollama` でテキストを生成し、Completions または Chat Completions の処理を選択できます。
+- `sd` モードで Stable Diffusion WebUI に txt2img / img2img リクエストを送り、画像を保存できます。
+- `sb` モードで Style-Bert-VITS2 に音声生成リクエストを送り、音声を保存できます。
+- `cu` モードで ComfyUI の workflow を送信し、画像をアップロードして生成結果を保存できます。
+- `{{...}}` 形式の式をプロンプトや対応するファイルパスで評価できます。ファイル読み込み、テキスト切り詰め、日時、乱数、環境変数、サブプロンプトなどの組み込み機能を利用できます。
+- 複数回の反復、phase ごとの生成、名前付き Markdown コードブロックのファイル出力に対応します。
+- 補助モードで PNG の生成パラメーターを抽出し、Windows 上でサーバープロセスを起動・終了できます。
 
-## ビルド要求
-* Boost 1.88.0+
-* Google Test
-* C++20+
-* Visual Studio の C++ ビルド環境と vcpkg の MSBuild 連携
+公開マクロ言語は式を評価する機能です。代入文、`if` / `while` などの statement 構文は現在無効です。詳細な構文・組み込み関数・制約は [技術仕様書](docs/SPECIFICATION.md#マクロ言語) を参照してください。
 
-Visual Studio Installer の構成インポートには、リポジトリ直下の `.vsconfig` を使用してください。Native Desktop C++ ワークロードと MSVC x86/x64 ツール（MSPDB を含む）、Windows 11 SDK 10.0.26100、vcpkg、Google Test 用コンポーネントを含みます。
+## 必要な環境
 
-実装は機能単位の複数の `.cpp` に分割されている。`Hermit/Hermit.hpp` は公開型・関数宣言とテンプレート実装を提供し、各実装ファイルは名前空間・機能単位でコンパイルされる。
+- Windows x64
+- Visual Studio の MSVC C++20 ビルド環境
+- vcpkg と Visual Studio の MSBuild 連携
+- vcpkg manifest が復元する Boost。テストをビルドする場合は Google Test も必要です。
 
-通常の検証は差分ビルドを優先する。任意の PowerShell から、インストール済み Visual Studio 18 を `vswhere.exe` で解決し、同じコンソールセッション内で開発環境を初期化して実行する。
-
-```powershell
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$install = & $vswhere -products * -property installationPath | Where-Object { $_ -match '\\18\\' } | Select-Object -First 1
-$devcmd = Join-Path $install 'Common7\Tools\VsDevCmd.bat'
-cmd.exe /d /c "call \"$devcmd\" -arch=x64 -host_arch=x64 && where msbuild && msbuild .\Hermit.sln /m /t:Build /p:VisualStudioVersion=18.0 /p:Configuration=Release /p:Platform=x64 /v:minimal"
-& .\test\x64\Release\test.exe
-```
-
-`/t:Rebuild` はツールチェーン・生成先の変更、依存関係破損、クリーン状態の再現が必要な場合だけ使用する。
-
-ファイル構成、公開 API、ヘッダー依存関係は [docs/SPECIFICATION.md](docs/SPECIFICATION.md) に集約しています。README では利用者が必要とする実行方法と公開仕様だけを説明します。
-
-`vcpkg.json` に Boost と Google Test を宣言し、`Hermit.vcxproj`、`HermitLib.vcxproj`、`test.vcxproj` で vcpkg manifest mode を有効にしている。各プロジェクトは vcpkg の `vcpkg.props` / `vcpkg.targets` を MSBuild へ条件付きでインポートするため、vcpkg が利用可能で連携設定が済んでいれば、ソリューションのビルド時に依存ライブラリが自動復元され、ヘッダー・ライブラリのパスも設定される。通常は個別に `vcpkg install` を実行する必要はない。
-
-初めて利用する環境では vcpkg を用意し、MSBuild 連携を一度有効にする。vcpkg のコマンドが PATH にある場合は次を実行する。
+Visual Studio の構成にはリポジトリ直下の `.vsconfig` を利用できます。vcpkg が利用可能で MSBuild 連携が済んでいれば、プロジェクトの manifest 設定に基づきビルド時に依存ライブラリが復元されます。必要な場合は vcpkg コマンドから一度連携を有効にします。
 
 ```powershell
 vcpkg integrate install
 ```
 
-初回ビルド時は依存パッケージのダウンロードとビルドのため、ネットワーク接続が必要となる。依存関係はリポジトリ直下の `vcpkg.json` と `vcpkg-configuration.json` で管理される。
+Release x64 の差分ビルド例です。Visual Studio 18 を `vswhere.exe` で検索し、同一のコンソール内で開発環境を初期化して MSBuild を実行します。
 
-## CLI リファレンス
-
-### 共通設定
-下記の設定は、対象とするバックエンドに依存せず共通して参照される。
-
-| オプション | 概要 | デフォルト値 | 備考 |
-| --- | --- | --- | --- |
-| --mode | モード | tg | `(tg\|kc\|sd\|sb\|cu\|extract-png-parameters\|create-process\|terminate-process)` のいずれか |
-| --base-path | 各種パスの基準となるパス | . |  |
-| --log-level | ログレベル | info | `(trace\|debug\|info\|warning\|error\|fatal)` のいずれか |
-| --log-file | ログファイル | log |  |
-| --config-file, -c | コマンドラインオプションを指定した設定ファイル | config.ini |  |
-| --verbose, -v | ログ出力をコンソールに冗長に出力する | false |  |
-| --number-iterations, -N | 処理を反復する回数 | 1 | `-1` を指定すると実行を停止するまで無限に処理を反復する。 |
-| --define, -D | マクロ | "" | 詳細は後述 |
-| --phases | phase | "" | 詳細は後述 |
-
-`config-file` で指定した設定ファイルは、INI 形式を想定した構文解析により読み込まれる。コマンドラインと設定ファイルの双方が共通するコマンドラインオプションを指定している場合、コマンドラインで指定された方を優先する。頻繁に指定するコマンドラインオプションは設定ファイルで指定することが検討できる。
-
-```ini:config.ini
-# ポート番号の設定
-llm-port = 5001
-
-# 真偽値オプションの設定例
-verbose = true
-
-# Gemma 4 向けの設定例
-llm-generation-prefix = <|channel>thought\n
-kc-stop-sequence = <turn|>
-kc-temperature = 1.0
-kc-top-k = 64
-kc-top-p = 0.95
-kc-max-context-length = 8192
-kc-max-length = 4096
-llm-reasoning-prefix = <|channel>thought\n
-llm-reasoning-suffix = <channel|>
+```powershell
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$install = & $vswhere -products * -property installationPath | Where-Object { $_ -match '\\18\\' } | Select-Object -First 1
+$devcmd = Join-Path $install 'Common7\Tools\VsDevCmd.bat'
+$buildCommand = 'call "{0}" -arch=x64 -host_arch=x64 && where msbuild && msbuild .\Hermit.sln /m:1 /t:Build /p:VisualStudioVersion=18.0 /p:Configuration=Release /p:Platform=x64 /v:normal' -f $devcmd
+cmd.exe /d /c $buildCommand
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-モード名は下記の通り、それぞれと対応するバックエンドの略称である。
+`Hermit.sln` にはアプリケーションとテストのプロジェクトが含まれます。通常は `/t:Build` を使い、クリーン状態が必要な場合に限って `/t:Rebuild` を使います。ビルド・テスト手順の詳細は [技術仕様書](docs/SPECIFICATION.md) と [Hermit build/test 手順](.agents/skills/hermit-build-test/SKILL.md) を参照してください。
 
-* tg: Text-Generation-webui
-* kc: KoboldCpp
-* sd: Stable-Diffusion-webui
-* sb: Style-Bert-VITS2
+## コマンドライン
 
-パスの区切り文字は `/` でなければならない。ファイル名の拡張子は省略することができる。テキストファイルのパスが期待される文脈でパスに拡張子が含まれない場合、 `.txt` を補完する。相対パスは `--base-path` オプションで指定したパスを基準として解釈される。
+オプションの完全な一覧は `Hermit.exe --help` で表示できます。コマンドを先に指定して実行します。
 
-## バックエンド別の使用法
-
-### oobabooga/text-generation-webui
-oobabooga/text-generation-webui(https://github.com/oobabooga/text-generation-webui) を導入し、下記の準備をする。
-1. `text-generation-webui/user_data/CMD_FLAGS.txt` にて ` --api` オプションを指定する。
-2. `start_windows.bat` など実行環境と対応するスクリプトを実行し、サーバーを起動する。
-
-`--mode tg` と `--llm-` および `--tg-` から始まるオプションを適宜指定して Hermit を実行する。
-使用するモデルはバックエンドが対応している形式であれば何でも構わないが、例として [Gemma 4](https://ai.google.dev/gemma/docs/core?hl=ja) などが挙げられる。
-
-主要ファイル
-
-| オプション | 概要 | デフォルト値 |
-| --- | --- | --- |
-| --llm-prompt-file | プロンプトファイル | prompt |
-| --llm-output-file | 出力ファイル | output |
-
-必要に応じて下記のオプションで通信先を指定する。oobabooga をデフォルトの設定で運用している場合、明示的に指定する必要はない。
-プロンプトとは、例えば以下のようなテキストである。
-
-```
-<|turn>system
-あなたは小説家です。内容の続きを500文字程度だけ執筆してください。
-
-# 登場人物
-## (中略)
-
-# 直近の内容
-{{tail(file("output"), 1024)}}
-<turn|>
-<|turn>user
-<turn|>
-<|turn>model
+```powershell
+Hermit.exe generate --backend tg --llm.host localhost --llm.port 5000 --llm.prompt-file prompt
 ```
 
-既存のファイルの内容ではなく特定の文字列をプロンプトして使用する場合、 `--*-prompt-file` オプションではなく `--*-prompt` オプションを使用する。
-`--*-prompt` オプションが指定されている場合、`--*-prompt-file` で指定されたファイルの内容は無視される。
+主な実行モードは次の通りです。
 
-| オプション | 概要 | デフォルト値 |
-| --- | --- | --- |
-| --llm-host | ホスト | localhost |
-| --llm-port | ポート | 5000 |
+| モード | 用途 |
+| --- | --- |
+| `tg` | text-generation-webui でテキスト生成 |
+| `kc` | KoboldCpp でテキスト生成 |
+| `lmstudio` | LM Studio の OpenAI 互換 API でテキスト生成 |
+| `llama-cpp` | llama.cpp server の OpenAI 互換 API でテキスト生成 |
+| `vllm` | vLLM の OpenAI 互換 API でテキスト生成 |
+| `ollama` | Ollama のネイティブ API でテキスト生成 |
+| `sd` | AUTOMATIC1111 Stable Diffusion WebUI で画像生成 |
+| `sb` | Style-Bert-VITS2 で音声生成 |
+| `cu` | ComfyUI workflow の実行 |
+| `extract-png-parameters` | PNG から生成パラメーターを抽出 |
+| `create-process` / `terminate-process` | サーバープロセスの起動・終了 |
 
-実行を開始すると、 Hermit は下記のように LLM に渡すプロンプトを作成する。
+コマンドは `generate --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama|sd|sb|cu>`、`models list --backend <lmstudio|llama-cpp|vllm|ollama>`、`embeddings create --backend <lmstudio|llama-cpp|vllm|ollama>`、`tokenize <encode|decode> --backend llama-cpp`、`server <start|stop>`、`png extract` のいずれかです。設定オプションは `--namespace.property` 形式で、INI でも同じ dotted key を使います。短縮形は `-h` のみです。旧 `--mode` とハイフン連結のフラットなオプション名は受け付けません。詳しくは [CLI オプション一覧](docs/SPECIFICATION.md#実装済みコマンドラインオプション一覧) を参照してください。
 
-1. `prompt.txt` の内容をプロンプトに追加する。
-2. `--llm-generation-prefix` オプションで指定された文字列をプロンプトに追加する。(デフォルトは空文字)
+HTTP API から受け取る応答 body は 128 MiB を上限とし、上限を超える応答は受信エラーになります。
 
-プロンプトを作成した後、LLM と通信し、テキストを生成する。生成されたテキストの先頭には `--llm-generation-prefix` オプションで指定された文字列が含まれる。
-デフォルトでは、生成したテキストは `output.txt` の末尾に追加される。
-変更する場合は `--llm-output-file` で出力先を指定する。親フォルダが存在しない場合、自動的に作成される。
+`exec(...)` マクロによる子プロセス起動は既定で無効です。信頼できるプロンプトだけを使う場合に限り、`--security.allow-process-exec` または INI の `security.allow-process-exec = true` で明示的に有効化してください。未信頼のプロンプトやテンプレートを使う場合は有効化しないでください。
 
-LLMに小説を生成させる場合、`output.txt` は作成された小説になる。
-LLMとチャットをする場合、`output.txt` は会話の履歴になる。
+### 設定ファイル
 
-### lostruins/koboldcpp
-lostruins/koboldcpp(https://github.com/lostruins/koboldcpp) を導入し、下記の準備をする。
-1. ` --port 5000` オプションなどを指定して `koboldcpp.exe` を起動する。
+既定では `config.ini` を読み込みます。設定ファイルは INI 形式で、コマンドラインと設定ファイルの両方に同じオプションがある場合はコマンドラインの値を優先します。相対パスは `--path.base` を基準に解決されます。
 
-`--mode kc` と `--llm-` および `--kc-` から始まるオプションを適宜指定して Hermit を実行する。
-
-```bat:run.bat
-rem 起動用バッチの例
-@echo off
-cd /d %~dp0
-set model=models/gemma-4-E4B-it-Q8_0.gguf
-
-koboldcpp.exe --model %model% ^
-  --gpulayers 99 ^
-  --contextsize 8192 ^
-  --usecuda ^
-  --jinja ^
-  --port 5000
+```ini
+backend = tg
+llm.host = localhost
+llm.port = 5000
+llm.prompt-file = prompt
+llm.output-file = output
+logging.console = false
 ```
 
-画像分析を利用する場合、KoboldCpp の起動オプションで下記のように CLIP / Vision 投影モデルを指定する必要がある。
-```
---mmproj mmproj-f16.gguf
-```
+設定ファイルを使わず、コマンドラインだけで指定することもできます。
 
-下記のようなコマンドで Hermit を実行すると、画像分析の結果が出力される。
-```
-Hermit --mode kc --llm-mode chat_completions --llm-image-file 
+```powershell
+Hermit.exe generate --backend kc --llm.host localhost --llm.port 5000 --llm.prompt-file prompt
 ```
 
-`--llm-mode chat_completions` を指定する場合、プロンプトにはチャットテンプレートのタグ(`<|turn>`, `<|think|>`, `<turn|>` 等)を含めてはならない。
-同オプションが指定された場合、OpenAI 互換 API `/v1/chat/completions` を利用することになるが、同 API は対話テンプレートの構築をサーバー側に任せることを想定している。
+ファイル名を受け取るオプションでは、相対パスを `--path.base` から解決します。パス区切りには `/` を使ってください。テキストファイルの拡張子は省略でき、省略時は `.txt` が補われます。パスの詳細と例外は [技術仕様書](docs/SPECIFICATION.md#起動コマンドと設定) を参照してください。
 
-```prompt.txt
-入力された画像に何が含まれるか詳細に分析し説明せよ。
+## バックエンドの準備と実行例
+
+各バックエンドは別途インストールして起動してください。Hermit 側の通信先は、バックエンドの起動ポートに合わせます。
+
+### text-generation-webui (`tg`)
+
+text-generation-webui の起動設定で API を有効にし、サーバーを起動します。
+
+```powershell
+Hermit.exe generate --backend tg --llm.host localhost --llm.port 5000 --llm.prompt-file prompt --llm.output-file output
 ```
 
-### AUTOMATIC1111/stable-diffusion-webui
-AUTOMATIC1111/stable-diffusion-webui (https://github.com/AUTOMATIC1111/stable-diffusion-webui) を導入し、下記の準備をする。
+### KoboldCpp (`kc`)
 
-1. `webui-user.bat` など実行環境と対応するスクリプトを編集し、`COMMANDLINE_ARGS` に `--api` を追加する。他のサーバーに割り当てるポートを考慮して適宜 `--port 7861` 等を追加する。
-2. `webui-user.bat` など実行環境と対応するスクリプトを実行し、サーバーを起動する。
+KoboldCpp を API サーバーとして起動します。以下は Windows バッチの例です。
 
-`--mode sd` と `--sd-` から始まるオプションを適宜指定する。
-下記のようなコマンドで画像を生成する。
-
-`Hermit --mode sd --sd-port 7861 --sd-width 832 --sd-height 1216 --sd-steps 30 --sd-prompt "sky"`
-
-### litagin02/Style-Bert-VITS2
-litagin02/Style-Bert-VITS2 (https://github.com/litagin02/Style-Bert-VITS2) を導入し、下記の準備をする。
-
-1. `config.yml` を編集し、他のサーバーに割り当てるポートを考慮して適宜 `port: 5001` のように変更する。
-2. `Server.bat` を実行し、サーバーを起動する。
-
-`--mode sb` と `--sb-` から始まるオプションを適宜指定する。
-下記のようなコマンドで音声を生成する。
-
-`Hermit --mode sb --sb-port 5001 --sb-model-name "amitaro" --sb-speaker-id 0 --sb-language JP --sb-text "こんにちは"`
-
-#### 共通オプション
-## 実行制御
-
-### 反復
-`-N` オプションにより処理を反復する回数を指定することができる。デフォルトの値は `1` である。`-1` を指定すると実行を停止するまで無限に処理を反復する。
-
-<!-- マクロ仕様は技術仕様書へ移管済み。README には掲載しない。 -->
-### 実行例
-囲まれたマクロを以下の文脈で使用することができる。
-
-* 各種テキストファイルの内容
-* コマンドラインオプションで指定するファイルパス
-
-マクロは特定の文字列を `{{` と `}}` で囲むことにより記述する。
-マクロはプロンプト中の任意の箇所に、任意の数だけ挿入することができる。
-マクロには、 `{{foo(arg1, arg2, arg3, ...)}}` 形式のマクロ関数と、 `{{foo}}` 形式のマクロ変数がある。
-マクロ式は評価結果を文字列へ展開します。公開版ではstatement構文と副作用を持つ代入・増減演算子を無効化しており、`if`／`else`、`while`、複合文、末尾セミコロン付き式も使用できません。これらを含むplaceholderは構文エラーになります。
-マクロ関数の引数として文字列定数を指定する場合 `"arg"` というように `"` で囲む。
-マクロは実行時に `--number-iterations` で指定された回数の反復毎に、マクロを評価した結果の文字列に展開される。
-例えば `{{int("41") + 1}}` は `42` に展開されます。単独代入も無効化されているため、`{{value = 42}}` は構文エラーです。`if`、`else`、`while`、`true`、`false` は予約語であり、変数名や関数名には使えません。
-
-ただし、`--log-file` で指定されたログファイルのパスは、プログラムの開始時に一度だけマクロを展開され、以降その時点のパスを使用し続ける。
-これはプログラムがログファイルのストリームを開いたまま保持し効率的にログ出力するための制限である。
-
-マクロ変数は `--define` オプションにより実行前に定義することができる。
-`--define "user={{user}}" "char={{char}}"` というようにマクロの展開先にマクロを指定することができる。
-ただし上記のようにマクロの展開後の文字列が展開前の文字列と完全に一致した場合、再帰的なマクロの展開は中断される。
-このような冗長なマクロの定義は、マクロを含むプロンプトを LLM を使用して生成する際に、マクロの展開を抑止するために役立つ。
-
-マクロ変数はその値として C 言語の `bool`, `int`, `char`, `double`, `string` のいずれかひとつを保持することができる。
-マクロ変数は動的に型付けされ、 `=` 演算子によってのみ型を変更することができる。
-それ以前に宣言されていないマクロ変数に対する `=` による代入は、マクロ変数の宣言および初期化として解釈される。
-宣言されたマクロ変数は同ファイル、および同ファイルから `generated` マクロで呼び出されたサブプロンプト内でのみ有効である。
-文字定数は `'c'` 形式、文字列定数は `"str"` 形式で表現する。エスケープ文字は C 言語のそれと同様である。
-
-#### マクロ利用例
-
-| 種別 | 記法 | 機能・戻り値 |
-| --- | --- | --- |
-| 変数 | `N` | 現在の反復番号（1 始まり）。 |
-| 変数 | `phase` | 現在の phase 名。 |
-| 変数 | `prev_phase` | 直前の phase 名。先頭では未定義。 |
-| 変数 | `next_phase` | 次の phase 名。末尾では未定義。 |
-| 変数 | `stdin` | 非対話入力時の標準入力。対話端末では空文字列。 |
-| 変数 | `date` / `time` / `datetime` | 実行時のローカル日時を `yyyyMMdd`、`HHmmss`、`yyyyMMddHHmmss` で返す。 |
-| 変数 | `exit_code` | `exec` の直近の終了コード。 |
-| 型変換 | `int(value)` / `double(value)` / `char(value)` / `string(value)` | 引数を指定型へ変換して返す。変換不能時はマクロエラー。 |
-| ファイル | `file(path)` | テキストファイルの内容。相対パスは `--base-path` 基準。 |
-| 文字列切り詰め | `head(str, tokens)` / `tail(str, tokens)` | 先頭または末尾を指定トークン数に切り詰める。 |
-| 文字列切り詰め | `head_tail(str, head_tokens, tail_tokens)` | 先頭・末尾を残し、中間を `...` に置換する。 |
-| JSON | `json_literal(str)` | JSON 文字列リテラル用にエスケープする。 |
-| 環境変数 | `getenv(key)` / `setenv(key, value)` | 環境変数の取得／設定。`setenv` の戻り値は空文字列。 |
-| 生成 | `generated(prompt)` | 現在の設定でサブプロンプトを LLM に送り、生成結果を返す。 |
-| 乱数 | `random(min, max)` | 指定範囲の整数を返す。引数は 0～2 個で、省略時は 0～`UINT32_MAX`。 |
-| 選択 | `choice(value...)` | 引数からランダムに 1 つ選んで返す。 |
-| プロセス | `exec(executable, args...)` | 子プロセスの標準出力を返し、終了コードを `exit_code` に設定する。 |
-| コードブロック | `code_block(markdown, name)` | Markdown の指定名コードブロックを返す。未検出時は空文字列。 |
-| 要約 | `summary(prompt, target, max_tokens)` | LLM で要約し、結果を指定トークン数以下に切り詰める。 |
-| パス | `root(path)` / `parent(path)` / `stem(path)` / `extension(path)` | パスの各構成要素を返す。 |
-
-#### マクロ利用例
-#### `file(path)`
-指定されたテキストファイルの内容に展開される。
-これによりプロンプトを複数のファイルに分割して管理することができる。
-
-```
-{{file("output")}}
-{{file("output.txt")}}
-{{file("parent_dir/output.txt")}}
+```bat
+koboldcpp.exe --model models/model.gguf --usecuda --port 5000
 ```
 
-#### `head(str, max_token)`
-指定された文字列のうち、先頭から指定されたトークン数分の文字列に展開される。
-例えば最古の出力をプロンプトに含めることができる。
+Hermit から利用します。
 
-```
-{{head(file("output"), 1024)}}
+```powershell
+Hermit.exe generate --backend kc --llm.host localhost --llm.port 5000 --llm.prompt-file prompt --llm.output-file output
 ```
 
-#### `tail(str, max_token)`
-指定された文字列のうち、末尾から指定されたトークン数分の文字列に展開される。
-例えば最新の出力をプロンプトに含めることができる。
+画像入力を使う場合は KoboldCpp の vision 対応設定とモデルを用意し、`--llm.mode chat-completions` と `--llm.image-file` を指定します。
 
+### OpenAI 互換のローカル LLM server
+
+LM Studio、llama.cpp server、vLLM は OpenAI 互換の `/v1/completions` と `/v1/chat/completions` を使います。既定ポートはそれぞれ 1234、8080、8000 です。`--llm.model` でサーバーが認識するモデル ID を指定し、API key が必要な場合は `--llm.api-key` を設定します。token count は completions API の `usage.prompt_tokens` を使います。
+
+```powershell
+Hermit.exe generate --backend lmstudio --llm.model "model-id" --llm.mode chat-completions --llm.prompt-file prompt
+Hermit.exe generate --backend llama-cpp --llm.model "model-id" --llm.mode chat-completions --llm.prompt-file prompt
+Hermit.exe generate --backend vllm --llm.model "model-id" --llm.mode chat-completions --llm.prompt-file prompt --llm.api-key "token"
 ```
+
+OpenAI 互換 API の埋め込みは `POST /v1/embeddings` で作成できます。対象モデルは embedding 対応である必要があります。
+
+```powershell
+Hermit.exe embeddings create --backend lmstudio --llm.model "embedding-model" --llm.embedding-input "first text" "second text"
+Hermit.exe embeddings create --backend llama-cpp --llm.model "embedding-model" --llm.prompt "text to embed"
+Hermit.exe embeddings create --backend vllm --llm.model "embedding-model" --llm.prompt "text to embed" --llm.api-key "token"
+```
+
+### Ollama (`ollama`)
+
+Ollama は `/api/generate` と `/api/chat` を使います。既定ポートは 11434 です。`--llm.model` にローカルのモデル名と tag を指定します。
+
+```powershell
+Hermit.exe generate --backend ollama --llm.model "llama3.2:latest" --llm.mode chat-completions --llm.prompt-file prompt
+```
+
+Ollama の埋め込み API は `POST /api/embed` です。複数テキストは `--llm.embedding-input` に並べ、API 固有の追加 field は JSON object の `--llm.embedding-options` で指定します。`input` と `model` は予約 field です。
+
+```powershell
+Hermit.exe embeddings create --backend ollama --llm.model "embeddinggemma" --llm.embedding-input "first text" "second text" --llm.embedding-options '{"truncate":false,"dimensions":256}'
+```
+
+ローカル LLM server のモデル一覧は `models list` で取得できます。LM Studio はネイティブ REST [`/api/v1/models`](https://lmstudio.ai/docs/developer/rest/list)、llama.cpp と vLLM は OpenAI 互換 [`/v1/models`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)、Ollama は [`/api/tags`](https://docs.ollama.com/api/tags) を使用します。vLLM の model endpoint は [公式 vLLM server utilities](https://docs.vllm.ai/en/stable/api/vllm/benchmarks/serve/) でも使われています。応答 JSON を標準出力へそのまま出力し、host/port、Bearer API key、`--llm.models-target` で接続先を上書きできます。
+
+```powershell
+Hermit.exe models list --backend lmstudio
+Hermit.exe models list --backend llama-cpp
+Hermit.exe models list --backend vllm --llm.api-key "token"
+Hermit.exe models list --backend ollama
+```
+
+Ollama のモデル詳細、稼働状況、サーバーバージョンは `models show`、`models running`、`models version` で確認できます。
+
+```powershell
+Hermit.exe models show --backend ollama --llm.model "gemma4" --llm.model-info-options '{"verbose":true}'
+Hermit.exe models running --backend ollama
+Hermit.exe models version --backend ollama
+```
+
+Ollama model lifecycle 操作は request body を JSON object で指定します。応答はサーバーの JSON/NDJSON をそのまま出力します。create、pull、push の進捗配信は `stream` field で制御できます。
+
+```powershell
+Hermit.exe models pull --backend ollama --llm.model-action-options '{"model":"llama3.2","stream":false}'
+Hermit.exe models copy --backend ollama --llm.model-action-options '{"source":"llama3.2","destination":"llama3.2-backup"}'
+Hermit.exe models create --backend ollama --llm.model-action-options '{"model":"custom-assistant","from":"llama3.2","system":"You are helpful.","stream":false}'
+Hermit.exe models push --backend ollama --llm.model-action-options '{"model":"account/custom-assistant","stream":false}'
+Hermit.exe models delete --backend ollama --llm.model-action-options '{"model":"custom-assistant"}'
+```
+
+llama.cpp server の tokenization API は `tokenize encode` と `tokenize decode` で呼び出せます。encode は `/tokenize`、decode は `/detokenize` を使用します。`--llm.tokenize-options` で `add_special`、`parse_special`、`with_pieces` を JSON で渡せます。
+
+```powershell
+Hermit.exe tokenize encode --backend llama-cpp --llm.prompt "Hello world" --llm.tokenize-options '{"with_pieces":true}'
+Hermit.exe tokenize decode --backend llama-cpp --llm.token-ids 123 456
+```
+
+### AUTOMATIC1111 Stable Diffusion WebUI (`sd`)
+
+WebUI 起動引数で API を有効にします。ポートは WebUI の設定に合わせてください。
+
+```powershell
+Hermit.exe generate --backend sd --sd.host localhost --sd.port 7860 --sd.steps 30 --sd.prompt "sky" --sd.output-file "{{datetime}}.png"
+```
+
+`--sd.seed-resize-from-h/w` は両モード共通です。img2img だけに別の値を指定するには `--sd.img2img-seed-resize-from-h/w` を使います。専用値が `-1` の場合は共通値を引き継ぎます。
+
+### Style-Bert-VITS2 (`sb`)
+
+Style-Bert-VITS2 の設定で API サーバーを起動します。
+
+```powershell
+Hermit.exe generate --backend sb --sb.host localhost --sb.port 5001 --sb.model-name "amitaro" --sb.speaker-id 0 --sb.language JP --sb.text "こんにちは" --sb.output-file "{{datetime}}.wav"
+```
+
+### ComfyUI (`cu`)
+
+ComfyUI を起動し、API 用 workflow JSON をファイルに保存します。`--cu.prompt-file` にそのファイルを指定します。
+
+```powershell
+Hermit.exe generate --backend cu --cu.host localhost --cu.port 8188 --cu.prompt-file workflow.json --cu.output-directory output
+```
+
+workflow の入力画像は `--cu.upload-images name=path` 形式で登録できます。アップロード後のサーバー側ファイル名はマクロ変数 `name` として workflow の展開に使えます。複数の画像を指定する場合は値を複数渡します。
+
+```powershell
+Hermit.exe generate --backend cu --cu.prompt-file workflow.json --cu.upload-images source=images/source.png mask=images/mask.png
+```
+
+ComfyUI が返す生成ファイルは `--cu.output-directory` に保存されます。`--cu.preserve-subdirectories` を有効にするとサーバー側のサブディレクトリ構成を保ちます。
+
+ComfyUI の queue・history・node schema・model type・model list・embedding・extension・feature の取得、画像・mask アップロード、画像・モデル metadata の取得、queue 操作・実行割り込み・モデル解放 API は `comfy` コマンドで呼び出せます。query は `--cu.api-options` に JSON object で渡します。
+
+```powershell
+Hermit.exe comfy queue
+Hermit.exe comfy queue-update --cu.api-options '{"clear":true}'
+Hermit.exe comfy queue-update --cu.api-options '{"delete":["prompt-id"]}'
+Hermit.exe comfy history --cu.api-options '{"max_items":100,"offset":0}'
+Hermit.exe comfy history-item --cu.prompt-id "prompt-id"
+Hermit.exe comfy history-update --cu.api-options '{"clear":true}'
+Hermit.exe comfy history-update --cu.api-options '{"delete":["prompt-id"]}'
+Hermit.exe comfy interrupt --cu.api-options '{"prompt_id":"prompt-id"}'
+Hermit.exe comfy free --cu.api-options '{"unload_models":true,"free_memory":true}'
+Hermit.exe comfy events --cu.client-id "hermit-client" --cu.event-count 20
+Hermit.exe comfy object-info
+Hermit.exe comfy object-info --cu.node-class "KSampler"
+Hermit.exe comfy models
+Hermit.exe comfy models-folder --cu.model-folder checkpoints
+Hermit.exe comfy embeddings
+Hermit.exe comfy extensions
+Hermit.exe comfy features
+Hermit.exe comfy upload-image --cu.upload-file images/input.png --cu.api-options '{"type":"input","subfolder":"references","overwrite":true}'
+Hermit.exe comfy upload-mask --cu.upload-file images/mask.png --cu.api-options '{"original_ref":{"filename":"input.png","type":"input","subfolder":"references"},"type":"input","subfolder":"masks"}'
+Hermit.exe comfy view --cu.api-options '{"filename":"image.png","type":"output","subfolder":""}' > image.png
+Hermit.exe comfy view-metadata --cu.metadata-folder checkpoints --cu.api-options '{"filename":"model.safetensors"}'
+```
+
+`comfy models`、`comfy models-folder`、`comfy embeddings`、`comfy extensions`、`comfy features` は各一覧・機能 API を呼び出します。`comfy upload-image` は画像をアップロードし、`comfy upload-mask` は `original_ref` が示す画像の alpha mask をアップロードします。両操作の multipart 追加項目は `--cu.api-options` の JSON object で指定します。`comfy view` は filename/type/subfolder/preview/channel query に応じた画像 bytes を標準出力へ書き出すため、ファイル保存時はリダイレクトを使います。`comfy view-metadata` は `--cu.metadata-folder` と filename を使って safetensors metadata JSON を取得します。`--cu.model-folder` は `comfy models-folder` の取得先を指定します。`comfy object-info` は全 node schema を取得し、`--cu.node-class` を指定すると `/object_info/{node_class}` の schema を取得します。`comfy events` は WebSocket の text frame を JSON のまま出力し、binary frame は `{"type":"binary","data":"<base64>"}` 形式で出力します。`--cu.event-count` の既定値 0 は接続を継続して受信します。
+
+## プロンプト、反復、マクロ
+
+`tg` / `kc` モードでは、既定で `--llm.prompt-file prompt` の内容を読み、展開後のテキストを送信します。`--llm.prompt` に値を直接渡すと、プロンプトファイルより直接指定した文字列が使われます。生成結果は `--llm.output-file output` に追記されます。
+
+マクロは `{{...}}` で囲みます。たとえば過去の出力から末尾 1024 トークンを取り込むには、prompt ファイルに次のように書きます。
+
+```text
+これまでの内容:
 {{tail(file("output"), 1024)}}
 ```
 
-#### `head_tail(str, head_max_token, tail_max_token)`
-指定されたテキストファイルの内容のうち、先頭と末尾それぞれから指定されたトークン数分の文字列に展開される。
-先頭と末尾の間は `...` で表現される。
-例えば最古と最新の出力をプロンプトに含めることができる。
-```
-{{head_tail(file("output"), 512, 512)}}
-```
+`head` / `tail` などのトークン数指定関数は、`tg` / `kc` の token-count API を使います。
 
-#### `json_literal(str)`
-生改行を `\n` に置換するなど、JSON の文字列リテラルとして正しくなるようエスケープする。
+日時や反復番号をファイル名に使うこともできます。
 
-```
-{ "key": "{{json_literal(file("filename"))}}" }
+```powershell
+Hermit.exe generate --backend tg --iteration.count 3 --llm.output-file "chapter-{{N}}-{{datetime}}"
 ```
 
-#### `getenv(key)`
-環境変数 `key` の値に展開される。
-```
-{{getenv("PATH")}}
-```
+式の構文、利用可能な変数と関数、ファイル処理上の注意は [マクロ言語仕様](docs/SPECIFICATION.md#マクロ言語) を参照してください。
 
-#### `setenv(key, value)`
-環境変数 `key` の値を `value` に設定し、空文字に展開される。
+`--iteration.phases` に複数の値を渡すと、各反復で phase ごとに処理します。`--llm.paragraphs-file` を指定すると、段落ファイルのリストから phase を読み込みます。現在・前・次の phase は `{{phase}}`、`{{prev_phase}}`、`{{next_phase}}` で参照できます。
 
-#### `date` / `time` / `datetime`
-`date` は `yyyyMMdd`、`time` は `HHmmss`、`datetime` は `yyyyMMddHHmmss` 形式で実行時のローカル時刻に展開される。主に生成したテキストを生成単位で出力する目的で使用する。
+`--llm.code-block-extract` を有効にすると、生成 Markdown 内の名前付きコードブロックを個別ファイルへ出力できます。コードブロック名 `stdout` の内容はファイルに保存せず標準出力へ出します。
 
-#### `N`
-1から開始する現在の反復回数に展開される。主に生成したテキストを反復単位で出力する目的で使用する。
+## サーバープロセス制御
 
-#### `stdin`
-標準入力から渡された文字列に展開される。
+`create-process` モードはサーバーを非同期に起動し、指定したホストとポートに接続できるまで待機します。
 
-#### `generated(subprompt)`
-サブプロンプトを実行した結果に展開される。
-
-#### `exec(exe, args ...)`
-子プロセスとして実行ファイルを実行した結果に展開される。終了コードはマクロ変数 `{{exit_code}}` に設定される。
-
-```
-{{exec("cmd", "/c", "dir")}}
-exit_code={{exit_code}}
+```powershell
+Hermit.exe server start --process.executable koboldcpp.exe --process.arguments "--model models/model.gguf --port 5000" --process.port 5000
 ```
 
-#### `summary(prompt, target, max_tokens)`
-文字列を最大トークン数以下に要約する。
+`terminate-process` モードは実行ファイル名またはフルパスに一致するプロセスを終了します。プロセス列挙と終了は Windows で実装されています。
 
-```
-{{summary(file("summary"), file("long_file"), 1024)}}
-```
-
-`summary.txt` とは下記のようなファイルである。
-
-```
-<|turn>system
-<|think|>
-Summarize the following text in {{max_tokens}} tokens or fewer. Output only the summary with no introductory text, markdown formatting, or additional commentary.
-<turn|>
-<|turn>user
-{{target}}
-<turn|>
-<|turn>model
+```powershell
+Hermit.exe server stop --process.executable koboldcpp.exe
 ```
 
-`{{target}}`, `{{max_tokens}}` は `prompt` の実行中のみ設定される。展開語の文字列のトークン数は `max_tokens` に切り詰められる。
+## 詳細資料
 
-
-#### `random(min, max)`
-ランダムな整数値の10進数表記に展開される。引数は後ろ側から省略可能。`min` のデフォルト値は `0`、`max` のデフォルト値は `2147483647` である。`{{random()}}` で 32bit 整数値の表現範囲のうち正の値のみに展開される。例えば seed 値を実行単位で変更することができる。
-
-#### `choice(args ...)`
-任意の数の文字列からランダムにひとつ選択して展開する。
-
-```
-{{choice("foo", "bar")}}
-```
-
-### phase と段落
-1回の処理は1個以上の phase から構成され、それらは順番に実行される。
-phase は `--phases "MyPhase1" "MyPhase2" "MyPhase3"` オプションで任意の数だけ指定可能である。 
-現在実行中の phase は、プロンプトの内容に `{{phase}}` マクロを記述することにより、実行時に参照できる。
-前の phase は `{{prev_phase}}` マクロ、次の phase は `{{next_phase}}` マクロで参照できる。
-
-例えば `--phases "{{char}}" "{{user}}" --llm-generation-prefix "{{phase}}: "` オプションを指定した場合、pahse として現在発言している人物の名前を扱い、それをプロンプトの先頭に追加することにより、LLM が当該の人物の発言を生成するように誘導する。
-`prompt.txt` の内容に phase の要素に関する説明を含めることにより、1回の処理を複数の工程に分割し、動的に生成の方法を制御することができる。
-
-`--llm-paragraphs-file` オプションで段落ファイルを指定した場合、段落ファイルに含まれる内容が phase に割り当てられる。
-段落ファイルは、順序リストあるいは非順序リストにより段落の名前を記述し、その直後にインデントされた順序リストあるいは非順序リストによりその段落の説明を記述した、マークダウン記法に準拠したファイルである。下記は段落ファイルの具体例である。
-
-```
-1. 段落1の名前
-    * 説明1
-    * 説明2
-    * 説明3
-2. 段落2の名前
-    * 説明1
-    * 説明2
-    * 説明3
-3. 段落3の名前
-    * 説明1
-    * 説明2
-    * 説明3
-```
-
-具体的な利用例として、`prompt.txt` に下記のように記述すれば、現在の段落と前後の段落に関する情報をプロンプトに含めることができる。
-
-```
-# 段落の情報
-## 現在の段落
-{{phase}}
-
-## 前の段落
-{{prev_phase}}
-
-## 次の段落
-{{next_phase}}
-```
-
-これにより、LLM が物語として一貫し、秩序正しいテキストを生成するよう誘導することができる。
-
-### 使用可能な演算子
-* 代入演算子: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `^=`, `|=`
-* 比較演算子: `==`, `!=`, `<`, `>`, `<=`
-* 二項演算子: `<<`, `>>`, `+`, `-`, `*`, `/`, `%`
-* 前置演算子: `++`, `--`, `+`, `-`, `!`, `~`
-* 後置演算子: `++`, `--`
-
-一般的なプログラミング言語で使用可能な基本的な演算子は概ね提供されるが、ポインタや参照等は提供されない。
-マクロの評価中に型の不整合等で問題が発生した場合、当該のマクロ全体は空文字列として評価され、ログに警告が出力される。
-
-### コードブロック単位のファイル出力
-`--llm-code-block-extract` オプションを指定することにより、LLM の出力に含まれる markdown 形式のコードブロックをそれぞれファイルとして出力することができる。ファイル名は拡張子を省略して記述し、実行時に `.txt` を補完して解釈される。
-
-````
-```foo
-aaa
-bbb
-ccc
-```
-
-```bar
-aaa
-bbb
-ccc
-```
-
-```stdout
-aaa
-bbb
-ccc
-```
-````
-
-ただし、 `stdout` が指定された場合、そのコードブロックの内容はファイルではなく標準出力に出力される。
-これらの機能は、LLM の出力を複数に分割し、それぞれを再利用するために利用することができる。
-コードブロックを出力するためのプロンプトとは、例えば以下のようなものである。
-
-````
-# 命令
-後述する出力形式に従い回答をコードブロックとして出力せよ。コードブロックの名前は厳密にそのまま利用せよ。
-
-# 出力形式
-```output\{{datetime}}
-(中略)
-```
-````
-
-<!-- マクロ仕様ここまで -->
-
-## サーバーの起動と終了
-
-テキストや画像、音声などを横断的に生成したい場合、以下のコマンドラインオプションで同期的にサーバーを起動あるいは終了することができる。現在は koboldcpp を対象として想定している。その他のサーバーにも対応する予定。
-
-### サーバーの起動
-```
-Hermit --mode create-process --server-executable-file koboldcpp.exe --server-arguments "--model %model% --port 5001" --server-host localhost --server-port 5001 --server-max-retries 60 --server-wait-ms 1000
-```
-
-`--create-process` が指定された場合、サーバーを起動するコマンドを非同期に実行後、`--server-host` と `--server-port` により指定された IPアドレス およびポートと通信が可能になるまで待機する。
-`--server-host localhost`, `--server-max-retries 60`, `--server-wait-ms 1000` は省略することができる。
-
-### サーバーの終了
-```
-Hermit --mode terminate-process --server-executable-file koboldcpp.exe
-```
-`--terminate-process` が指定された場合、指定された実行ファイルのフルパスあるいはファイル名を利用してサーバーのプロセスを終了する。
-
-## 備考
-本プロジェクトはテンプレートを多用するため、MSVC でコンパイルする際はコンパイルオプションに `/bigobj` を追加する必要がある。
+- [技術仕様書](docs/SPECIFICATION.md): 実装済み CLI オプション、既定値、マクロ構文、ファイル処理、依存関係
+- [バックエンド Web API 対応表](docs/BACKEND_WEB_API_COVERAGE.md): 対象 API の棚卸しと実装・テスト状況
+- [課題一覧](docs/ISSUES.md): 既知の問題、優先順位、次の作業
+- [ビルドとテストの手順](.agents/skills/hermit-build-test/SKILL.md)
 
 ## ライセンス
 
-本プロジェクトは [MIT License](LICENSE) の下で提供されています。詳細はルートの `LICENSE` ファイルを参照してください。
+本プロジェクトは [MIT License](LICENSE) の下で提供されています。

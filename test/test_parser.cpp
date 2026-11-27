@@ -1,3 +1,5 @@
+#include <limits>
+
 #include <gtest/gtest.h>
 #include <boost/spirit/include/qi.hpp>
 
@@ -264,15 +266,15 @@ TEST(parser_grammar, production_expression_ast_variant_propagates_into_placehold
     ASSERT_EQ(parsed_statement->size(), 1U);
 }
 
-#if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS)
-TEST(parser_grammar, expression_statement_attribute_cast_accepts_expression_and_semicolon)
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS)
+TEST(parser_grammar, expression_statement_fusion_attribute_propagates_expression_and_semicolon)
 {
     namespace qi = boost::spirit::qi;
     using iterator_type = std::string::const_iterator;
     qi::rule<iterator_type, Hermit::parser::expression_type()> expression;
     qi::rule<iterator_type, Hermit::parser::expression_statement_type()> expression_statement;
     expression = qi::lit('e') >> qi::attr(Hermit::parser::expression_type{});
-    expression_statement = qi::attr_cast<Hermit::parser::expression_statement_type>(expression >> qi::lit(';'));
+    expression_statement = expression >> qi::lit(';');
 
     const std::string input{ "e;" };
     auto first{ input.begin() };
@@ -294,10 +296,368 @@ TEST(parser_grammar, expression_statement_attribute_cast_accepts_expression_and_
     Hermit::parser::expression_statement_type production_expression_statement;
     EXPECT_TRUE(production_grammar.parse_expression_statement("1 + 2;", production_expression_statement));
     Hermit::parser::statement_type production_statement;
-    EXPECT_TRUE(production_grammar.parse_statement("1 + 2;", production_statement));
+    ASSERT_TRUE(production_grammar.parse_statement("1 + 2;", production_statement));
+    EXPECT_NE(boost::get<Hermit::parser::expression_statement_type>(&production_statement), nullptr);
     Hermit::parser::placeholder_result_type production_placeholder;
-    EXPECT_TRUE(production_grammar.parse_statement_placeholder("{{1 + 2;}}", production_placeholder));
+    ASSERT_TRUE(production_grammar.parse_statement_placeholder("{{1 + 2;}}", production_placeholder));
+    const auto* statements{ boost::get<std::vector<Hermit::parser::statement_type>>(&production_placeholder) };
+    ASSERT_NE(statements, nullptr);
+    ASSERT_EQ(statements->size(), 1U);
+    EXPECT_NE(boost::get<Hermit::parser::expression_statement_type>(&statements->front()), nullptr);
 
+}
+
+TEST(parser, experimental_all_statement_alternatives_parse_and_evaluate_together)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    Hermit::parser::placeholder_result_type prefix_placeholder;
+    Hermit::parser::placeholder_result_type placeholder;
+
+    EXPECT_TRUE(grammar.parse_statement("value=1", statement));
+    EXPECT_TRUE(grammar.parse_statement("value+=2", statement));
+    EXPECT_TRUE(grammar.parse_statement("{value*=3}", statement));
+    EXPECT_TRUE(grammar.parse_statement("if(1)value++; else value=9", statement));
+    EXPECT_TRUE(grammar.parse_statement("while(0)value=2", statement));
+    EXPECT_TRUE(grammar.parse_statement("value--;", statement));
+    EXPECT_TRUE(grammar.parse_statement_placeholder("{{value=1 value+=2}}", prefix_placeholder));
+    EXPECT_TRUE(grammar.parse_statement_placeholder("{{value=1 value+=2 {value*=3}}}", prefix_placeholder));
+    EXPECT_TRUE(grammar.parse_statement_placeholder("{{value=1 value+=2 {value*=3} if(1)value++; else value=9}}", prefix_placeholder));
+    EXPECT_TRUE(grammar.parse_statement_placeholder("{{value=1 value+=2 {value*=3} if(1)value++; else value=9 while(0)value=2}}", prefix_placeholder));
+    ASSERT_TRUE(grammar.parse_statement_placeholder("{{value=1 value+=2 {value*=3} if(1)value++; else value=9 while(0)value=2 value--;}}", placeholder));
+    const auto* statements{ boost::get<std::vector<Hermit::parser::statement_type>>(&placeholder) };
+    ASSERT_NE(statements, nullptr);
+    ASSERT_EQ(statements->size(), 6U);
+    EXPECT_NE(boost::get<Hermit::parser::simple_assignment_statement_type>(&(*statements)[0]), nullptr);
+    EXPECT_NE(boost::get<Hermit::parser::simple_assignment_statement_type>(&(*statements)[1]), nullptr);
+    EXPECT_NE(boost::get<Hermit::parser::compound_statement_type>(&(*statements)[2]), nullptr);
+    EXPECT_NE(boost::get<Hermit::parser::if_statement_type>(&(*statements)[3]), nullptr);
+    EXPECT_NE(boost::get<Hermit::parser::while_statement_type>(&(*statements)[4]), nullptr);
+    EXPECT_NE(boost::get<Hermit::parser::expression_statement_type>(&(*statements)[5]), nullptr);
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{value=1 value+=2 {value*=3} if(1)value++; else value=9 while(0)value=2 value--;}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("value"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "9");
+}
+#endif
+
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS)
+TEST(parser, experimental_expression_statement_is_parsed_and_discarded)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    const auto ast{ Hermit::parser::parse("before{{ 1 + 2; }}after", cfg, ctx) };
+    ASSERT_EQ(ast.size(), 3U);
+    const auto* placeholder{ boost::get<Hermit::parser::placeholder_type>(&ast[1]) };
+    ASSERT_NE(placeholder, nullptr);
+    const auto* statements{ boost::get<std::vector<Hermit::parser::statement_type>>(&placeholder->content) };
+    ASSERT_NE(statements, nullptr);
+    ASSERT_EQ(statements->size(), 1U);
+    const auto* expression_statement{ boost::get<Hermit::parser::expression_statement_type>(&statements->front()) };
+    ASSERT_NE(expression_statement, nullptr);
+    ASSERT_EQ(expression_statement->expression.size(), 1U);
+    EXPECT_EQ(Hermit::parser::evaluate("before{{ 1 + 2; }}after", cfg, ctx), "beforeafter");
+    EXPECT_THROW(Hermit::parser::parse("{{ 1 + 2; trailing }}", cfg, ctx), std::exception);
+}
+
+TEST(parser_grammar, experimental_expression_statement_helper_requires_complete_input)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::expression_statement_type expression_statement;
+    EXPECT_TRUE(grammar.parse_expression_statement("1 + 2;", expression_statement));
+    EXPECT_FALSE(grammar.parse_expression_statement("1 + 2; trailing", expression_statement));
+}
+#endif
+
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS)
+TEST(parser, experimental_simple_assignment_initializes_and_updates_variable)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+
+    EXPECT_EQ(Hermit::parser::evaluate("before{{answer=40+2}}after", cfg, ctx), "beforeafter");
+    ASSERT_NE(ctx.get("answer"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("answer")), "42");
+    EXPECT_EQ(Hermit::parser::evaluate("{{answer=7}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("answer")), "7");
+    EXPECT_EQ(Hermit::parser::evaluate("{{answer=\"wrong type\"}}", cfg, ctx), "");
+    EXPECT_NE(boost::get<int>(ctx.get("answer")), nullptr);
+    EXPECT_EQ(*boost::get<int>(ctx.get("answer")), 7);
+    EXPECT_EQ(Hermit::parser::evaluate("{{uninitialized=missing}}", cfg, ctx), "");
+    EXPECT_EQ(ctx.get("uninitialized"), nullptr);
+    EXPECT_EQ(Hermit::parser::evaluate("{{first=1 second=2}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("first"), nullptr);
+    ASSERT_NE(ctx.get("second"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("first")), "1");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("second")), "2");
+}
+
+TEST(parser_grammar, experimental_assignment_requires_identifier_and_complete_statement)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    ASSERT_TRUE(grammar.parse_statement("value=1+2", statement));
+    const auto* assignment{ boost::get<Hermit::parser::simple_assignment_statement_type>(&statement) };
+    ASSERT_NE(assignment, nullptr);
+    EXPECT_EQ(assignment->name, "value");
+    EXPECT_EQ(assignment->operator_, Hermit::parser::assignment_operator::assign);
+    EXPECT_FALSE(grammar.parse_statement("1=value", statement));
+    EXPECT_FALSE(grammar.parse_statement("value=1 trailing", statement));
+    Hermit::parser::placeholder_result_type placeholder;
+    EXPECT_TRUE(grammar.parse_statement_placeholder("{{value=1}}", placeholder));
+    EXPECT_FALSE(grammar.parse_statement_placeholder("{{value=1 trailing}}", placeholder));
+}
+#endif
+
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS)
+TEST(parser, experimental_compound_assignments_reuse_checked_assignment_operators)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{value=5 value+=2 value-=1 value*=3 value/=2 value%=5}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("value"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "4");
+    EXPECT_EQ(Hermit::parser::evaluate("{{bits=1 bits<<=2 bits>>=1 bits|=1 bits&=5 bits^=4}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("bits"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("bits")), "5");
+}
+
+TEST(parser, experimental_compound_assignment_errors_preserve_variable)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{value=8 value/=0}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("value"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "8");
+    EXPECT_EQ(Hermit::parser::evaluate("{{value%=0}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "8");
+    EXPECT_EQ(Hermit::parser::evaluate("{{value+=\"wrong type\"}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "8");
+    EXPECT_EQ(Hermit::parser::evaluate("{{undefined+=1}}", cfg, ctx), "");
+    EXPECT_EQ(ctx.get("undefined"), nullptr);
+}
+
+TEST(parser_grammar, experimental_compound_assignment_keeps_operator_in_ast_and_requires_complete_input)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    ASSERT_TRUE(grammar.parse_statement("value<<=2", statement));
+    const auto* assignment{ boost::get<Hermit::parser::simple_assignment_statement_type>(&statement) };
+    ASSERT_NE(assignment, nullptr);
+    EXPECT_EQ(assignment->operator_, Hermit::parser::assignment_operator::shift_left_assign);
+    EXPECT_FALSE(grammar.parse_statement("1+=2", statement));
+    EXPECT_FALSE(grammar.parse_statement("value+=2 trailing", statement));
+}
+#endif
+
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS)
+TEST(parser, experimental_compound_statements_preserve_nested_order_and_apply_side_effects)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{value=0 {value+=1 {value*=2} value+=3}{value+=4}}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("value"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "9");
+}
+
+TEST(parser_grammar, experimental_compound_statements_build_nested_ast_and_accept_empty_blocks)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    ASSERT_TRUE(grammar.parse_statement("{first=1 {second=2} first+=3}", statement));
+    const auto* block{ boost::get<Hermit::parser::compound_statement_type>(&statement) };
+    ASSERT_NE(block, nullptr);
+    ASSERT_EQ(block->statements.size(), 3U);
+    EXPECT_NE(boost::get<Hermit::parser::simple_assignment_statement_type>(&block->statements[0]), nullptr);
+    const auto* nested_block{ boost::get<Hermit::parser::compound_statement_type>(&block->statements[1]) };
+    ASSERT_NE(nested_block, nullptr);
+    ASSERT_EQ(nested_block->statements.size(), 1U);
+    EXPECT_NE(boost::get<Hermit::parser::simple_assignment_statement_type>(&nested_block->statements.front()), nullptr);
+    EXPECT_NE(boost::get<Hermit::parser::simple_assignment_statement_type>(&block->statements[2]), nullptr);
+    EXPECT_TRUE(grammar.parse_statement("{}", statement));
+    EXPECT_EQ(boost::get<Hermit::parser::compound_statement_type>(&statement)->statements.size(), 0U);
+}
+
+TEST(parser_grammar, experimental_compound_statement_requires_complete_input)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    Hermit::parser::placeholder_result_type placeholder;
+    EXPECT_FALSE(grammar.parse_statement("{value=1", statement));
+    EXPECT_FALSE(grammar.parse_statement("{value=1} trailing", statement));
+    ASSERT_TRUE(grammar.parse_statement_placeholder("{{{value=1}{value+=2}}}", placeholder));
+    const auto* statements{ boost::get<std::vector<Hermit::parser::statement_type>>(&placeholder) };
+    ASSERT_NE(statements, nullptr);
+    ASSERT_EQ(statements->size(), 2U);
+}
+#endif
+
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS)
+TEST(parser, experimental_if_else_runs_only_the_selected_branch)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{if(1){value=1}else{notSelected=2} if(0){notSelected=3}else{value+=3} if(0){notSelected=4}}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("value"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "4");
+    EXPECT_EQ(ctx.get("notSelected"), nullptr);
+}
+
+TEST(parser_grammar, experimental_if_else_binds_dangling_else_to_nearest_if)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    ASSERT_TRUE(grammar.parse_statement("if(1) if(0) first=1 else second=2", statement));
+    const auto* outer_if{ boost::get<Hermit::parser::if_statement_type>(&statement) };
+    ASSERT_NE(outer_if, nullptr);
+    EXPECT_FALSE(outer_if->else_statement);
+    const auto* inner_if{ boost::get<Hermit::parser::if_statement_type>(&outer_if->statement) };
+    ASSERT_NE(inner_if, nullptr);
+    EXPECT_TRUE(inner_if->else_statement);
+    EXPECT_NE(boost::get<Hermit::parser::simple_assignment_statement_type>(&*inner_if->else_statement), nullptr);
+}
+
+TEST(parser_grammar, experimental_if_statement_requires_complete_input)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    Hermit::parser::placeholder_result_type placeholder;
+    EXPECT_FALSE(grammar.parse_statement("if(1)value=1 trailing", statement));
+    ASSERT_TRUE(grammar.parse_statement_placeholder("{{if(1)value=1 else value=2}}", placeholder));
+    const auto* statements{ boost::get<std::vector<Hermit::parser::statement_type>>(&placeholder) };
+    ASSERT_NE(statements, nullptr);
+    ASSERT_EQ(statements->size(), 1U);
+}
+#endif
+
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS)
+TEST(parser, experimental_while_rechecks_condition_and_supports_nested_loops)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    ctx.set("counter", 0);
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{while(0)counter+=1 while(counter<3){counter+=1} while(counter<5)counter+=1}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("counter"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("counter")), "5");
+
+    ctx.set("outer", 0);
+    ctx.set("inner", 0);
+    ctx.set("total", 0);
+    EXPECT_EQ(Hermit::parser::evaluate("{{while(outer<3){inner=0 while(inner<2){total+=1 inner+=1} outer+=1}}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("total")), "6");
+}
+
+TEST(parser, experimental_while_iteration_budget_is_shared_and_allows_exact_limit)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    ctx.set("counter", 0);
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{while(counter<5000)counter+=1 while(counter<10000)counter+=1}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("counter")), "10000");
+}
+
+TEST(parser, experimental_while_stops_after_budget_and_preserves_completed_side_effects)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    ctx.set("counter", 0);
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{while(counter<10000)counter+=1 while(1)counter+=1}}", cfg, ctx), "");
+    ASSERT_NE(ctx.get("counter"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("counter")), "10000");
+}
+
+TEST(parser_grammar, experimental_while_builds_nested_ast_and_requires_complete_input)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::statement_type statement;
+    ASSERT_TRUE(grammar.parse_statement("while(1){while(0)value+=1}", statement));
+    const auto* outer_while{ boost::get<Hermit::parser::while_statement_type>(&statement) };
+    ASSERT_NE(outer_while, nullptr);
+    const auto* body{ boost::get<Hermit::parser::compound_statement_type>(&outer_while->statement) };
+    ASSERT_NE(body, nullptr);
+    ASSERT_EQ(body->statements.size(), 1U);
+    EXPECT_NE(boost::get<Hermit::parser::while_statement_type>(&body->statements.front()), nullptr);
+    EXPECT_FALSE(grammar.parse_statement("while(1)value+=1 trailing", statement));
+}
+#endif
+
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT)
+TEST(parser, experimental_increment_and_decrement_preserve_prefix_postfix_values)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    ctx.set("value", 5);
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{++value}}", cfg, ctx), "6");
+    EXPECT_EQ(Hermit::parser::evaluate("{{value++}}", cfg, ctx), "6");
+    EXPECT_EQ(Hermit::parser::evaluate("{{--value}}", cfg, ctx), "6");
+    EXPECT_EQ(Hermit::parser::evaluate("{{value--}}", cfg, ctx), "6");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "5");
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{value=1 old=value++ new=++value}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("old")), "1");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("new")), "3");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "3");
+}
+
+TEST(parser, experimental_increment_and_decrement_reject_invalid_targets_and_types)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    ctx.set("integer", 1);
+    ctx.set("boolean", true);
+    ctx.set("floating", 1.5);
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{++(integer)}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::parser::evaluate("{{1++}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::parser::evaluate("{{integer++++}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::parser::evaluate("{{++missing}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::parser::evaluate("{{boolean++}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::parser::evaluate("{{--floating}}", cfg, ctx), "");
+    EXPECT_EQ(ctx.get("missing"), nullptr);
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("integer")), "1");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("boolean")), "1");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("floating")), "1.5");
+}
+
+TEST(parser, experimental_increment_and_decrement_reject_integer_overflow_without_mutation)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    ctx.set("maximum", (std::numeric_limits<int>::max)());
+    ctx.set("minimum", (std::numeric_limits<int>::min)());
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{maximum++}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::parser::evaluate("{{--minimum}}", cfg, ctx), "");
+    EXPECT_EQ(*boost::get<int>(ctx.get("maximum")), (std::numeric_limits<int>::max)());
+    EXPECT_EQ(*boost::get<int>(ctx.get("minimum")), (std::numeric_limits<int>::min)());
+}
+
+TEST(parser, experimental_increment_and_decrement_work_in_loop_conditions_and_bodies)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+    ctx.set("counter", 0);
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{while(counter++<3)counter+=1}}", cfg, ctx), "");
+    EXPECT_EQ(Hermit::value_to_string(*ctx.get("counter")), "5");
+}
+
+TEST(parser_grammar, experimental_increment_and_decrement_require_complete_expression_input)
+{
+    Hermit::parser::grammar grammar;
+    Hermit::parser::placeholder_result_type placeholder;
+    EXPECT_TRUE(grammar.parse_statement_placeholder("{{value=++value}}", placeholder));
+    EXPECT_FALSE(grammar.parse_statement_placeholder("{{value=++value trailing}}", placeholder));
 }
 #endif
 
@@ -619,6 +979,7 @@ TEST(parser, supports_expression_statement_as_unbraced_if_body_with_else)
 }
 #endif
 
+#if !defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT)
 TEST(parser, rejects_disabled_statement_syntax)
 {
     Hermit::config cfg;
@@ -634,6 +995,7 @@ TEST(parser, rejects_disabled_statement_syntax)
     EXPECT_THROW(Hermit::parser::parse("{{++value}}", cfg, ctx), std::exception);
     EXPECT_THROW(Hermit::parser::parse("{{if(1){value=1}}}", cfg, ctx), std::exception);
     EXPECT_THROW(Hermit::parser::parse("{{while(0)value=1}}", cfg, ctx), std::exception);
+    EXPECT_THROW(Hermit::parser::parse("{{{value=1}}}", cfg, ctx), std::exception);
     EXPECT_THROW(Hermit::parser::parse("{{1 + 2;}}", cfg, ctx), std::exception);
     ASSERT_NE(ctx.get("value"), nullptr);
     EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "0");
@@ -644,8 +1006,10 @@ TEST(parser, rejects_disabled_statement_syntax)
     Hermit::parser::placeholder_result_type placeholder;
     EXPECT_FALSE(grammar.parse_expression_statement("1 + 2;", expression_statement));
     EXPECT_FALSE(grammar.parse_statement("value = 1", statement));
+    EXPECT_FALSE(grammar.parse_statement("{value=1}", statement));
     EXPECT_FALSE(grammar.parse_statement_placeholder("{{value = 1}}", placeholder));
 }
+#endif
 
 TEST(parser_grammar, reserves_control_and_boolean_keywords_as_identifiers)
 {
@@ -744,6 +1108,22 @@ TEST(parser, evaluates_logical_conditions_in_conditional_expressions)
     EXPECT_EQ(Hermit::parser::evaluate("{{ (1 < 2 && 3 < 2) || 4 < 5 ? 1 : 0 }}", cfg, ctx), "1");
 }
 
+TEST(parser, parses_overlapping_operator_tokens_with_expected_precedence)
+{
+    Hermit::config cfg;
+    Hermit::context ctx;
+
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 | 2 || 0 }}", cfg, ctx), "1");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 || 2 | 0 }}", cfg, ctx), "1");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 & 3 && 4 }}", cfg, ctx), "1");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 && 3 & 1 }}", cfg, ctx), "1");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 << 2 }}", cfg, ctx), "4");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 <= 2 }}", cfg, ctx), "1");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 >= 2 }}", cfg, ctx), "0");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ 1, 2 }}", cfg, ctx), "2");
+    EXPECT_EQ(Hermit::parser::evaluate("{{ (1, 2) }}", cfg, ctx), "2");
+}
+
 #if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS)
 TEST(parser, evaluates_only_the_selected_conditional_branch)
 {
@@ -752,6 +1132,7 @@ TEST(parser, evaluates_only_the_selected_conditional_branch)
     EXPECT_EQ(Hermit::parser::evaluate("{{ 1 ? (selected = 7) : (unselected = 8) }}{{ selected }}", cfg, ctx), "7");
     EXPECT_EQ(ctx.get("unselected"), nullptr);
 }
+
 #endif
 
 TEST(parser_grammar, rejects_conditional_expression_without_else_branch)

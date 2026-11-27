@@ -4,8 +4,6 @@
 #include <string>
 #include <vector>
 
-#include <boost/log/trivial.hpp>
-
 #include "Hermit_context.hpp"
 #include "Hermit_lru.hpp"
 #include "Hermit_app_types.hpp"
@@ -14,6 +12,7 @@
 #include "Hermit_sd_config.hpp"
 #include "Hermit_media_config.hpp"
 #include "Hermit_aux_config.hpp"
+#include "Hermit_log_types.hpp"
 
 namespace Hermit
 {
@@ -29,10 +28,11 @@ namespace Hermit
 
         command_mode command_mode;
         std::string base_path;
-        boost::log::trivial::severity_level log_level{ boost::log::trivial::info };
+        log::severity_level log_level{ log::severity_level::info };
         std::string log_file;
         std::string config_file;
         bool verbose{};
+        bool allow_process_exec{};
         int number_iterations{};
         std::vector<std::string> user_defined_variables;
         std::vector<std::string> phases;

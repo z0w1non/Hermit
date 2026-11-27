@@ -34,6 +34,7 @@ namespace Hermit
 
         value_reference_type evaluate_expression(const expression_type& expr, const config& cfg, context& ctx);
         value_reference_type evaluate_assignment_expression(const assignment_expression_type& expr, const config& cfg, context& ctx);
+        value_reference_type apply_assignment_operator(assignment_operator operator_, value_reference_type& lhs, const value_reference_type& rhs, context& ctx);
         value_reference_type evaluate_assignment_expression_node(const assignment_expression_node_type& expr, const config& cfg, context& ctx);
         value_reference_type evaluate_conditional_expression(const conditional_expression_type& expr, const config& cfg, context& ctx);
         value_reference_type evaluate_logical_or_expression(const logical_or_expression_type& expr, const config& cfg, context& ctx);

@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <string>
+
 #include "Hermit_core.hpp"
 #include "Hermit_templates.hpp"
 #include "Hermit_lru_impl.hpp"
@@ -18,6 +21,10 @@ namespace Hermit
         {
             { "tg", command_mode::tg },
             { "kc", command_mode::kc },
+            { "lmstudio", command_mode::lmstudio },
+            { "llama-cpp", command_mode::llama_cpp },
+            { "vllm", command_mode::vllm },
+            { "ollama", command_mode::ollama },
             { "sd", command_mode::sd },
             { "sb", command_mode::sb },
             { "cu", command_mode::cu },
@@ -114,8 +121,10 @@ namespace Hermit
 
     llm_mode string_to_llm_mode(std::string_view name)
     {
+        std::string normalized{ name };
+        std::replace(normalized.begin(), normalized.end(), '-', '_');
         llm_mode result{};
-        if (boost::describe::enum_from_string(name, result))
+        if (boost::describe::enum_from_string(normalized, result))
         {
             return result;
         }

@@ -2,10 +2,13 @@
 #define HERMIT_TCP_HPP
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string_view>
+
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 
@@ -13,10 +16,12 @@ namespace Hermit
 {
     struct tcp
     {
+        static constexpr std::uint64_t max_response_body_size{ 128ULL * 1024ULL * 1024ULL };
         using body_type = boost::beast::http::string_body;
         using request_type = boost::beast::http::request<body_type>;
         using response_type = boost::beast::http::response<body_type>;
         using request_executor = std::function<response_type(std::string_view, std::string_view, const request_type&)>;
+        static void ensure_success(const response_type& response);
         tcp(); ~tcp();
         tcp(const tcp&) = delete; tcp& operator=(const tcp&) = delete;
         tcp(tcp&&) = default; tcp& operator=(tcp&&) = default;
@@ -45,7 +50,9 @@ namespace Hermit
         {
             transport.expires_after(connect_timeout).connect(host, port);
             request_type request{ make_request(boost::beast::http::verb::get, host, target) };
-            return transport.expires_after(request_timeout).request(request);
+            response_type response{ transport.expires_after(request_timeout).request(request) };
+            ensure_success(response);
+            return response;
         }
     private:
         boost::beast::error_code error_code;

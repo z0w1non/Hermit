@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="390" viewBox="0 0 900 390" role="img" aria-labelledby="title desc">
+  <title id="title">Parser translation unit frontend time before and after boundary split</title>
+  <desc id="desc">C1xx frontend seconds: parser 37.03 before and 19.04 after; visitors 17.32 before and 13.27 after; combined 54.34 before and 32.31 after.</desc>
+  <style>text{font-family:Segoe UI,Arial,sans-serif;fill:#17212b}.title{font-size:22px;font-weight:600}.label{font-size:15px}.small{font-size:13px}.axis{stroke:#8b98a5;stroke-width:1}.before{fill:#9aa9b5}.after{fill:#277da1}</style>
+  <text x="36" y="38" class="title">Parser template boundary: c1xx frontend time</text>
+  <text x="36" y="64" class="small">Release x64, VS18, /t:Rebuild /m:1, _CL_=/Bt+ · seconds</text>
+  <line x1="245" y1="90" x2="245" y2="322" class="axis"/><line x1="245" y1="322" x2="790" y2="322" class="axis"/>
+  <g class="small"><text x="240" y="345">0</text><text x="372" y="345">10</text><text x="507" y="345">20</text><text x="642" y="345">30</text><text x="777" y="345">40</text></g>
+  <g stroke="#c8d0d7" stroke-width="1"><line x1="380" y1="90" x2="380" y2="322"/><line x1="515" y1="90" x2="515" y2="322"/><line x1="650" y1="90" x2="650" y2="322"/><line x1="785" y1="90" x2="785" y2="322"/></g>
+  <text x="36" y="128" class="label">Hermit_parser.cpp</text><rect x="245" y="106" width="500.0" height="24" rx="3" class="before"/><text x="752" y="124" class="small">37.03</text><rect x="245" y="136" width="257.0" height="24" rx="3" class="after"/><text x="510" y="154" class="small">19.04</text>
+  <text x="36" y="208" class="label">Hermit_parser_visitors.cpp</text><rect x="245" y="186" width="233.8" height="24" rx="3" class="before"/><text x="486" y="204" class="small">17.32</text><rect x="245" y="216" width="179.1" height="24" rx="3" class="after"/><text x="431" y="234" class="small">13.27</text>
+  <text x="36" y="288" class="label">Combined</text><rect x="245" y="266" width="734.7" height="24" rx="3" class="before"/><text x="748" y="284" class="small">54.34</text><rect x="245" y="296" width="436.2" height="24" rx="3" class="after"/><text x="688" y="314" class="small">32.31</text>
+  <rect x="590" y="55" width="14" height="14" class="before"/><text x="610" y="67" class="small">Before</text><rect x="680" y="55" width="14" height="14" class="after"/><text x="700" y="67" class="small">After</text>
+</svg>

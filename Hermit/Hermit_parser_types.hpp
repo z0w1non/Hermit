@@ -145,7 +145,7 @@ namespace Hermit
         struct assignment_expression_node_type
         {
             conditional_expression_type lhs;
-            assignment_operator operator_;
+            assignment_operator operator_{ assignment_operator::assign };
             assignment_expression_type rhs;
         };
 
@@ -166,6 +166,13 @@ namespace Hermit
             assignment_expression_type expression;
         };
 
+        struct simple_assignment_statement_type
+        {
+            std::string name;
+            assignment_operator operator_{ assignment_operator::assign };
+            assignment_expression_type expression;
+        };
+
         struct expression_statement_type
         {
             expression_type expression;
@@ -178,6 +185,7 @@ namespace Hermit
         using statement_type = boost::variant<
             expression_statement_type,
             assignment_statement_type,
+            simple_assignment_statement_type,
             boost::recursive_wrapper<compound_statement_type>,
             boost::recursive_wrapper<if_statement_type>,
             boost::recursive_wrapper<while_statement_type>>;
@@ -223,6 +231,7 @@ BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::macro_expression_node_type, name, argu
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::variable_type, name)
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::assignment_expression_node_type, lhs, operator_, rhs)
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::assignment_statement_type, expression)
+BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::simple_assignment_statement_type, name, operator_, expression)
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::expression_statement_type, expression)
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::compound_statement_type, statements)
 BOOST_FUSION_ADAPT_STRUCT(Hermit::parser::if_statement_type, condition, statement, else_statement)

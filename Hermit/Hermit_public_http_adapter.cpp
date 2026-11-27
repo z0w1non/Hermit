@@ -1,11 +1,26 @@
-#include "Hermit_public_http_adapter.hpp"
-
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <utility>
+
+#include "Hermit_public_http_adapter.hpp"
+#include "Hermit_errors.hpp"
 
 namespace Hermit::public_api
 {
+    void ensure_success(const http_response_data& response)
+    {
+        if (response.status_code != static_cast<int>(boost::beast::http::status::ok))
+        {
+            Hermit::throw_exception
+            (
+                http_status_exception{}
+                << error_info::http::response::status{ response.status_code }
+                << error_info::http::response::reason{ std::to_string(response.status_code) }
+            );
+        }
+    }
+
     http_request_data make_http_request_data(std::string_view host, std::string_view port,
         std::string_view target, std::string body, http_transport_options options)
     {
@@ -19,7 +34,9 @@ namespace Hermit::public_api
         return [executor = std::move(executor)](std::string_view host, std::string_view target, std::string_view body)
         {
             const tcp::request_type request{ tcp::make_post_json_request(host, target, body) };
-            return executor(host, target, request).body();
+            const tcp::response_type response{ executor(host, target, request) };
+            tcp::ensure_success(response);
+            return response.body();
         };
     }
 
@@ -30,6 +47,10 @@ namespace Hermit::public_api
             tcp::request_type request{ data.method == http_method::get
                 ? tcp::make_get_json_request(data.host, data.target)
                 : tcp::make_post_json_request(data.host, data.target, data.body) };
+            if (data.method == http_method::delete_)
+            {
+                request.method(boost::beast::http::verb::delete_);
+            }
             if (!data.content_type.empty())
             {
                 request.set(boost::beast::http::field::content_type, data.content_type);
@@ -39,6 +60,7 @@ namespace Hermit::public_api
                 request.set(boost::beast::http::field::authorization, *data.options.authorization);
             }
             const tcp::response_type response{ executor(data.host, data.port, request) };
+            tcp::ensure_success(response);
             http_response_data result;
             result.status_code = response.result_int();
             result.body = response.body();
@@ -60,9 +82,11 @@ namespace Hermit::public_api
             data.port = port;
             data.target = request.target();
             data.body = request.body();
-            data.method = request.method() == boost::beast::http::verb::get ? http_method::get : http_method::post;
+            data.method = request.method() == boost::beast::http::verb::get ? http_method::get
+                : request.method() == boost::beast::http::verb::delete_ ? http_method::delete_ : http_method::post;
             data.content_type = std::string{ request[boost::beast::http::field::content_type] };
             const http_response_data result{ executor(data) };
+            ensure_success(result);
             const unsigned body_size{ static_cast<unsigned>(std::min<std::size_t>(result.body.size(), static_cast<std::size_t>(std::numeric_limits<unsigned>::max()))) };
             tcp::response_type response{ static_cast<boost::beast::http::status>(result.status_code), body_size };
             response.body() = result.body;

@@ -6,6 +6,7 @@
 #include "Hermit_builtin.hpp"
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <regex>
 #include <thread>
 #include <boost/algorithm/string.hpp>
@@ -167,49 +168,75 @@ namespace Hermit
 
     bool wait_for_port(const std::string& host, const std::string& port, unsigned int max_retries, unsigned int wait_ms)
     {
-        boost::system::error_code error_code;
+        const std::shared_ptr<boost::system::error_code> connect_error{ std::make_shared<boost::system::error_code>() };
+        return wait_for_port(host, port, max_retries, wait_ms,
+            [connect_error](std::string_view host_name, std::string_view service)
+            {
+                const std::shared_ptr<boost::asio::io_context> ctx{ std::make_shared<boost::asio::io_context>() };
+                boost::asio::ip::tcp::resolver resolver{ *ctx };
+                boost::system::error_code resolve_error;
+                const boost::asio::ip::tcp::resolver::results_type results{ resolver.resolve(host_name, service, resolve_error) };
+                if (resolve_error || results.empty())
+                {
+                    Hermit::throw_exception(dns_resolve_exception{} << error_info::asio::error_code{ resolve_error });
+                }
 
-        boost::asio::io_context ctx;
-        boost::asio::ip::tcp::resolver resolver{ ctx };
-        const boost::asio::ip::tcp::resolver::results_type results{ resolver.resolve(host, port, error_code) };
-        if (error_code || results.empty())
-        {
-            Hermit::throw_exception(dns_resolve_exception{} << error_info::asio::error_code{ error_code });
-        }
+                const boost::asio::ip::tcp::endpoint endpoint{ *results.begin() };
+                return [ctx, endpoint, connect_error]()
+                {
+                    boost::asio::ip::tcp::socket socket{ *ctx };
+                    socket.connect(endpoint, *connect_error);
+                    if (!*connect_error)
+                    {
+                        socket.close();
+                        return true;
+                    }
+                    return false;
+                };
+            },
+            [host, port, max_retries, connect_error](unsigned int retries, unsigned int delay_ms)
+            {
+                HERMIT_LOG(trace) << "[Waiting " << (retries + 1) << "/" << max_retries << "] "
+                    << host << ":" << port << " (" << connect_error->message() << ")";
+                std::this_thread::sleep_for(std::chrono::milliseconds{ delay_ms });
+            });
+    }
 
-        boost::asio::ip::tcp::endpoint endpoint{ *results.begin() };
+    bool wait_for_port(unsigned int max_retries, unsigned int wait_ms, const port_connector& connector, const wait_callback& wait)
+    {
         for (unsigned int retries{}; retries < max_retries; ++retries)
         {
-            boost::asio::ip::tcp::socket socket{ ctx };
-            socket.connect(endpoint, error_code);
-            if (!error_code)
+            if (connector())
             {
-                socket.close();
                 return true;
             }
 
-            HERMIT_LOG(trace)
-                << "[Waiting " << (retries + 1) << "/" << max_retries << "] "
-                << host << ":" << port << " (" << error_code.message() << ")";
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+            wait(retries, wait_ms);
         }
-
         return false;
+    }
+
+    bool wait_for_port(std::string_view host, std::string_view port, unsigned int max_retries, unsigned int wait_ms, const port_connector_factory& connector_factory, const wait_callback& wait)
+    {
+        const port_connector connector{ connector_factory(host, port) };
+        return wait_for_port(max_retries, wait_ms, connector, wait);
     }
 
     void create_process_async(std::string_view excutable_file, const std::vector<std::string>& arguments)
     {
-        namespace process = boost::process::v2;
-        boost::asio::io_context ctx;
-        //auto exe = process::environment::find_executable(boost::filesystem::path{ excutable });
-        //if (exe.empty())
-        //{
-        //    HERMIT_LOG(warning) << "exe not found";
-        //    return;
-        //}
-        process::process proc{ ctx, excutable_file, arguments, process::windows::create_new_console };
-        proc.detach();
+        create_process_async(excutable_file, arguments,
+            [](std::string_view executable_file, const std::vector<std::string>& process_arguments)
+            {
+                namespace process = boost::process::v2;
+                boost::asio::io_context ctx;
+                process::process proc{ ctx, executable_file, process_arguments, process::windows::create_new_console };
+                proc.detach();
+            });
+    }
+
+    void create_process_async(std::string_view executable_file, const std::vector<std::string>& arguments, const process_launcher& launcher)
+    {
+        launcher(executable_file, arguments);
     }
 
     std::size_t terminate_process_by_path(const std::filesystem::path& executable_file_path)

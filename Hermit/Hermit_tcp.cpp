@@ -43,6 +43,19 @@ namespace Hermit
         }
     }
 
+    void tcp::ensure_success(const response_type& response)
+    {
+        if (response.result() != boost::beast::http::status::ok)
+        {
+            Hermit::throw_exception
+            (
+                http_status_exception{}
+                << error_info::http::response::status{ static_cast<int>(response.result_int()) }
+                << error_info::http::response::reason{ std::to_string(response.result_int()) }
+            );
+        }
+    }
+
     tcp::response_type tcp::request(const tcp::request_type& request)
     {
         boost::beast::http::write(tcp_stream, request, error_code);
@@ -56,7 +69,7 @@ namespace Hermit
 
         boost::beast::flat_buffer buffer;
         boost::beast::http::response_parser<body_type> parser;
-        parser.body_limit(boost::none);
+        parser.body_limit(max_response_body_size);
         boost::beast::http::read(tcp_stream, buffer, parser, error_code);
         if (error_code)
         {
@@ -67,15 +80,7 @@ namespace Hermit
         }
         const response_type response{ parser.release() };
 
-        if (response.result() != boost::beast::http::status::ok)
-        {
-            Hermit::throw_exception
-            (
-                http_status_exception{}
-                << error_info::http::response::status{ static_cast<int>(response.result_int()) }
-                << error_info::http::response::reason{ std::to_string(response.result_int()) }
-            );
-        }
+        ensure_success(response);
 
         return response;
     }

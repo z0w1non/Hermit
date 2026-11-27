@@ -25,19 +25,26 @@ namespace Hermit
 
         std::string read_file_to_string(const std::filesystem::path& file, std::ios::openmode openmode)
         {
-            std::string result;
-            if (!std::filesystem::exists(file) || !std::filesystem::is_regular_file(file))
-            {
-                Hermit::throw_exception(file_open_exception{} << error_info::path{ file });
-            }
-            boost::nowide::ifstream ifs{ file, openmode };
-            if (!ifs.is_open())
-            {
-                Hermit::throw_exception(file_open_exception{} << error_info::path{ file });
-            }
-            const std::string file_content{ (std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>() };
-            result = file_content;
-            return result;
+            return read_file_to_string(file, openmode,
+                [](const std::filesystem::path& path, std::ios_base::openmode mode)
+                {
+                    if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path))
+                    {
+                        Hermit::throw_exception(file_open_exception{} << error_info::path{ path });
+                    }
+                    boost::nowide::ifstream ifs{ path, mode };
+                    if (!ifs.is_open())
+                    {
+                        Hermit::throw_exception(file_open_exception{} << error_info::path{ path });
+                    }
+                    return std::string{ std::istreambuf_iterator<char>{ ifs }, std::istreambuf_iterator<char>{} };
+                });
+        }
+
+        std::string read_file_to_string(const std::filesystem::path& file, std::ios::openmode openmode,
+            const file_reader& reader)
+        {
+            return reader(file, openmode);
         }
 
         std::string read_binary_file_to_string(std::string_view file, const config& cfg)
@@ -45,9 +52,20 @@ namespace Hermit
             return read_file_to_string(string_to_path_by_config(file, cfg), std::ios::binary);
         }
 
+        std::string read_binary_file_to_string(std::string_view file, const config& cfg, const file_reader& reader)
+        {
+            return read_file_to_string(string_to_path_by_config(file, cfg), std::ios::binary, reader);
+        }
+
         std::string read_text_file_to_string(std::string_view path, const config& cfg, std::string_view extension)
         {
-            return read_file_to_string(string_to_path_by_config(complement_extension(path, extension), cfg));
+            return read_file_to_string(string_to_path_by_config(complement_extension(path, extension), cfg), std::ios::in);
+        }
+
+        std::string read_text_file_to_string(std::string_view path, const config& cfg, const file_reader& reader,
+            std::string_view extension)
+        {
+            return read_file_to_string(string_to_path_by_config(complement_extension(path, extension), cfg), std::ios::in, reader);
         }
 
         std::string image_path_to_base64_encoded_string(std::string_view image_path, const config& cfg)
@@ -147,17 +165,27 @@ namespace Hermit
 
         void write_file(const config& cfg, const char* data, std::size_t size, std::string_view filepath, std::ios_base::openmode mode)
         {
+            write_file(cfg, data, size, filepath, mode,
+                [](const std::filesystem::path& file_path, const char* contents, std::size_t content_size, std::ios_base::openmode openmode)
+                {
+                    filesystem::create_parent_directories(file_path);
+                    boost::nowide::ofstream ofs{ file_path, openmode };
+                    if (!ofs.is_open())
+                    {
+                        Hermit::throw_exception(file_open_exception{} << error_info::path{ file_path });
+                    }
+                    ofs.write(contents, content_size);
+                });
+        }
+
+        void write_file(const config& cfg, const char* data, std::size_t size, std::string_view filepath,
+            std::ios_base::openmode mode, const file_writer& writer)
+        {
             const bool is_binary{ (mode & std::ios::binary) != 0 };
             const std::string expanded{ expand_macro(filepath, cfg, cfg.ctx) };
             const std::string complemented{ filesystem::complement_extension(expanded, ".txt") };
             const std::filesystem::path file_path{ filesystem::string_to_path_by_config(is_binary ? filepath : complemented, cfg) };
-            filesystem::create_parent_directories(file_path);
-            boost::nowide::ofstream ofs{ file_path, mode };
-            if (!ofs.is_open())
-            {
-                Hermit::throw_exception(file_open_exception{} << error_info::path{ file_path });
-            }
-            ofs.write(data, size);
+            writer(file_path, data, size, mode);
             const std::string_view file_type{ is_binary ? "binary" : "text" };
             HERMIT_LOG(info) << "Write " << file_type << " to " << file_path;
         }
@@ -165,6 +193,12 @@ namespace Hermit
         void write_file(const config& cfg, std::string_view data, std::string_view filepath, std::ios_base::openmode mode)
         {
             return write_file(cfg, data.data(), data.size(), filepath, mode);
+        }
+
+        void write_file(const config& cfg, std::string_view data, std::string_view filepath, std::ios_base::openmode mode,
+            const file_writer& writer)
+        {
+            return write_file(cfg, data.data(), data.size(), filepath, mode, writer);
         }
 
         std::string prompt_from_string_or_file_path(std::string_view string, std::string_view file_path, const config& cfg)

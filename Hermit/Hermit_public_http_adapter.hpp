@@ -6,6 +6,7 @@
 
 namespace Hermit::public_api
 {
+    void ensure_success(const http_response_data& response);
     http_request_data make_http_request_data(std::string_view host, std::string_view port,
         std::string_view target, std::string body, http_transport_options options = {});
     http_request make_http_request(tcp::request_executor executor);

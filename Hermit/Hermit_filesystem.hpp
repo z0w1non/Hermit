@@ -2,6 +2,7 @@
 #define HERMIT_FILESYSTEM_HPP
 
 #include <filesystem>
+#include <functional>
 #include <ios>
 #include <string>
 #include <string_view>
@@ -12,10 +13,15 @@ namespace Hermit
     struct config;
     namespace filesystem
     {
+        using file_writer = std::function<void(const std::filesystem::path&, const char*, std::size_t, std::ios_base::openmode)>;
+        using file_reader = std::function<std::string(const std::filesystem::path&, std::ios_base::openmode)>;
         void create_parent_directories(const std::filesystem::path& path);
         std::string read_file_to_string(const std::filesystem::path& file, std::ios::openmode openmode = {});
+        std::string read_file_to_string(const std::filesystem::path& file, std::ios::openmode openmode, const file_reader& reader);
         std::string read_binary_file_to_string(std::string_view file, const config& cfg);
+        std::string read_binary_file_to_string(std::string_view file, const config& cfg, const file_reader& reader);
         std::string read_text_file_to_string(std::string_view path, const config& cfg, std::string_view extension = ".txt");
+        std::string read_text_file_to_string(std::string_view path, const config& cfg, const file_reader& reader, std::string_view extension = ".txt");
         std::string image_path_to_base64_encoded_string(std::string_view image_path, const config& cfg);
         std::vector<std::string> image_paths_to_base64_encoded_strings(const std::vector<std::string>& paths, const config& cfg);
         std::string complement_extension(std::string_view filepath, std::string_view extension);
@@ -25,7 +31,9 @@ namespace Hermit
         std::string base64_image_to_url(std::string_view base64_image, std::string_view mime_type);
         std::string_view extension_to_mime_type(std::string_view extension);
         void write_file(const config& cfg, const char* data, std::size_t size, std::string_view filepath, std::ios_base::openmode mode = 0);
+        void write_file(const config& cfg, const char* data, std::size_t size, std::string_view filepath, std::ios_base::openmode mode, const file_writer& writer);
         void write_file(const config& cfg, std::string_view data, std::string_view filepath, std::ios_base::openmode mode = 0);
+        void write_file(const config& cfg, std::string_view data, std::string_view filepath, std::ios_base::openmode mode, const file_writer& writer);
         std::string prompt_from_string_or_file_path(std::string_view string, std::string_view file_path, const config& cfg);
     }
 }

@@ -1,0 +1,143 @@
+# バックエンド Web API 対応台帳
+
+## 目的と判定基準
+
+本台帳は [REQ-005](REQUIREMENTS.md) の対象 API を公式資料から列挙し、各操作を Hermit の実装と回帰テストへ結び付ける。要求の達成を宣言するには、対象 API の操作ごとに method/path、入力、出力、実装箇所、テストを追跡し、未対応と未確認をなくす。
+
+API は上流プロジェクトの版、起動フラグ、導入拡張により変わる。したがって固定された単一一覧を完了条件とはせず、下記の公式資料の版と確認日を記録し、実行時の `/docs`、OpenAPI、route registry 等で得られる差分も棚卸し対象とする。バックエンドが提供する Web API には HTTP に加え WebSocket、ストリーミング、互換 API、管理 API を含める。UI の静的ファイル配信など個々の操作の分類は、要求の解釈を狭めず後続の棚卸しで明示する。
+
+### 状態
+
+| 状態 | 意味 |
+| --- | --- |
+| 未調査 | 公式 API 操作の抽出またはローカル実装照合が未完了。 |
+| 一部対応 | API ファミリー中に実装済みと未対応が混在する。 |
+| 実装済み・未検証 | 実装はあるが専用回帰テストとの対応が未確認。 |
+| 対応済み | 仕様に沿う実装と回帰テストを確認した。 |
+| 可変・未確定 | 任意機能・拡張等で提供 API が実行環境ごとに変わる。静的一覧との照合だけでは完了しない。 |
+
+## 初回バックエンド一覧
+
+2026-11-27 時点の上流 `master` / `main` または現行公式文書を確認した初回の粗い比較であり、完全な endpoint inventory ではない。method/path は公式 route 群の例示であり、下表を網羅済みと解釈しない。
+
+| backend | 公式根拠 | 確認できた API ファミリー・例 | 現行 Hermit 対応 | 状態 | 次の棚卸し |
+| --- | --- | --- | --- | --- | --- |
+| `tg` Text Generation Web UI | [API script routes](https://github.com/oobabooga/textgen/blob/main/modules/api/script.py)、[OpenAI API wiki](https://github.com/oobabooga/textgen/wiki/12-%E2%80%90-OpenAI-API/68b1b958f6e4ee33b0bc5a469298504ab2d200aa) | POST completions/chat/messages, GET models/model info, billing usage, POST audio transcription, image generation, embeddings/moderations, internal health/encode/decode/token-count/logits/chat-prompt/stop, and admin model/LoRA list/load/unload. Additional integrations/features can vary. | `/v1/completions`, `/v1/chat/completions`, `/v1/internal/token-count` targets for generation and token count. Streaming generation and most standard endpoints are unsupported. | Partial / variable | Extract all route declarations in `modules/api/script.py` and related route modules; record schemas, model conditions, and extension routes. |
+| `kc` KoboldCpp | [全 endpoint 公式一覧](https://github.com/LostRuins/koboldcpp.net/blob/main/src/content/docs/docs/api/endpoints.mdoc)、[API wiki](https://github.com/LostRuins/koboldcpp/wiki) | KoboldAI native `/api/v1/generate`、stream/check/abort/tokenize、OpenAI `/v1/*`、Anthropic、Ollama、A1111、ComfyUI、XTTS、管理、MCP 等。機能 flag/model 依存。 | native generate、token count、および設定モードに応じ OpenAI completions/chat target を使用。上記 API 群の多くは未対応。 | 一部対応・可変 | 公式 endpoint 表の全行を method/alias/flag/入力/応答まで展開し、同一実装を共有する互換 API をグループ化して endpoint ごとに対応を記録する。 |
+| `sd` Stable Diffusion WebUI | [A1111 API source](https://github.com/AUTOMATIC1111/stable-diffusion-webui/blob/master/modules/api/api.py)、[API wiki](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API) | `POST /sdapi/v1/txt2img`, `/img2img`, extras, png-info, interrogate, interrupt/skip, refresh/create/train and checkpoint operations; GET progress/options/cmd-flags/samplers/schedulers/upscalers/models/embeddings/memory/scripts/extensions. Optional server stop routes, extensions add routes. | Generation requests for txt2img/img2img. `send_request` waits for the final image; separate progress/status calls and most other APIs are unsupported. | Partial / variable | Enumerate all `add_api_route` registrations and model schemas in `modules/api/api.py` and `models.py`, plus extension callbacks. |
+| `sb` Style-Bert-VITS2 | [server_fastapi.py](https://github.com/litagin02/Style-Bert-VITS2/blob/master/server_fastapi.py)、実行時 FastAPI `/openapi.json` | `GET/POST /voice`, `POST /g2p`, `GET /models/info`, `POST /models/refresh`, `GET /status`, `GET /tools/get_audio`. FastAPI supplies OpenAPI schema. | `GET /voice` query-based WAV generation. POST `/voice` form/query variant, G2P, model refresh/info, status and local audio retrieval unsupported. | Partial | Extract all FastAPI routes and schemas, including both voice methods and binary audio retrieval. |
+| `cu` ComfyUI | [server.py](https://github.com/Comfy-Org/ComfyUI/blob/master/server.py)、[server communication routes docs](https://github.com/Comfy-Org/docs/blob/main/development/comfyui-server/comms_routes.mdx) | HTTP routes include `/ws`, `/prompt`, `/queue`, `/history`, `/object_info`, model and file listing, image/mask upload, view/metadata, stats/features, jobs and queue controls. Node/custom routes vary. | `POST /prompt`, `GET /history/{prompt_id}`, `GET /view` for generated output. WebSocket receive, cancellation/queue controls implemented in part; upload and model/system APIs remain unsupported. | Partial / variable | Enumerate registered built-in route groups and WebSocket protocol; inventory runtime custom-node routes. |
+| `lmstudio` LM Studio | [OpenAI-compatible endpoints](https://lmstudio.ai/docs/developer/openai-compat)、[REST API endpoints](https://lmstudio.ai/docs/developer/rest) | OpenAI-compatible models/responses/chat/embeddings/completions; REST model list/info, chat/completions, plus v1 stateful chat, model load/unload/download, tools and server events. | `/v1/completions`, `/v1/chat/completions`, `/v1/embeddings`, GET `/api/v1/models`. | Partial / version-dependent | Inventory current v1 REST operations and schemas; record version requirements and auth. |
+| `llama-cpp` llama.cpp server | [Server API reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) | OpenAI-compatible completions/chat/responses/embeddings/models; native completion, tokenize/detokenize, slots, metrics, health, model loading/router and multimodal APIs. | `/v1/completions`, `/v1/chat/completions`, `/v1/embeddings`, GET `/v1/models`; token count via completions usage. | Partial / variable | Extract all registered routes and request/response schemas from current server source, including model-router and multimodal conditional routes. |
+| `vllm` vLLM | [OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/) | OpenAI chat/completions/responses/embeddings/audio and task-dependent tokenizer, pooling, classify, score, rerank, realtime and model management/admin APIs. | `/v1/completions`, `/v1/chat/completions`, `/v1/embeddings`, GET `/v1/models`; token count via completions usage. | Partial / model-task-dependent | Inventory the current OpenAPI operation list and custom endpoints by task, version, and optional dependencies. |
+| `ollama` Ollama | [API reference](https://docs.ollama.com/api)、[OpenAI compatibility](https://ollama.com/blog/openai-compatibility) | Native generate/chat, model create/list/show/copy/delete/pull/push, embeddings, running models, version; OpenAI compatibility and hosted APIs vary. No standalone tokenization endpoint in the native local API reference. | Native `/api/generate`, `/api/chat`, `/api/embed`, GET `/api/tags`; token count uses non-streaming generate with `num_predict: 0` and reads `prompt_eval_count`. | Partial / version-dependent | Inventory all documented native, OpenAI-compatible and hosted routes; validate whether zero-token generation returns prompt counts across supported versions. |
+
+## API ごとの詳細追跡
+
+下表は確認可能な公式資料から抽出した初回 operation-level inventory である。要求・応答は実装スキーマを調査すべき単位の要約で、完全な型定義ではない。上流 main/master は可変であり、確認日を併記する。動的拡張・依存モジュール・API docs で route が増える可能性は、網羅性の blocker として残る。Hermit の既存 request/response contract テストがある操作も、この台帳の endpoint-specific schema tests がない限り「実装済み・未検証」とする。
+
+| ID | Backend | Method / path | 入力 → 出力（概要） | Hermit 実装・テスト | 状態 / availability |
+| --- | --- | --- | --- | --- | --- |
+| LMS-001 | lmstudio | POST `/v1/completions` | OpenAI completion input → choices + usage JSON | Shared `tg_parameters` OpenAI-compatible serializer/parser; `test/test_llm_backend.cpp` | 一部対応。streaming ignored; tokenizer count request uses `max_tokens:0`, `echo:true`; validate server response behavior. |
+| LMS-002 | lmstudio | POST `/v1/chat/completions` | model/messages/options → chat choices JSON | Shared OpenAI-compatible serializer/parser; backend selection/port defaults in `test/test.cpp` | 一部対応。streaming/tools and multimodal payload beyond existing message JSON not covered. |
+| LMS-003 | lmstudio | GET `/v1/models`; POST `/v1/responses`, `/v1/embeddings`; native `/api/v1/*` model/chat/tool operations | model query or input/model/encoding format → model, embedding vectors, task response or event stream | `GET /api/v1/models` via `llm::list_models`; `POST /v1/embeddings` via `llm::create_embeddings`; CLI tests in `test/test.cpp`, executor tests in `test/test_llm_backend.cpp` | 一部対応。Embeddings supports text batches and JSON additional fields; raw JSON response; remaining operations are not exposed. |
+| LCP-001 | llama-cpp | POST `/v1/completions` | OpenAI completion input → choices + usage JSON | Shared `tg_parameters` OpenAI-compatible serializer/parser; `test/test_llm_backend.cpp` | 一部対応。Streaming and optional fields remain partial. |
+| LCP-002 | llama-cpp | POST `/v1/chat/completions` | model/messages/options → chat choices JSON | Shared OpenAI-compatible serializer/parser; backend selection/port defaults in `test/test.cpp` | 一部対応。chat-template availability and multimodal fields vary by model. |
+| LCP-003 | llama-cpp | GET `/v1/models`; POST `/v1/responses`, `/v1/embeddings`, native completion/tokenizer/slots/model routes; GET metrics/health | model/task/system request → JSON/SSE/binary | `GET /v1/models` via `llm::list_models`; `POST /v1/embeddings` via `llm::create_embeddings`; CLI and executor tests in `test/test.cpp`, `test/test_llm_backend.cpp` | 一部対応。Embeddings supports text batches and JSON additional fields; other listed operations remain unsupported. |
+| LCP-004 | llama-cpp | POST `/tokenize` | content and add_special/parse_special/with_pieces → token IDs and optional pieces | `llm::tokenize`; CLI `tokenize encode`; tests in `test/test.cpp`, `test/test_llm_backend.cpp` | 対応（documented request/response contract）。実 server smoke test pending. |
+| LCP-005 | llama-cpp | POST `/detokenize` | token ID array → decoded content | `llm::detokenize`; CLI `tokenize decode`; tests in `test/test.cpp`, `test/test_llm_backend.cpp` | 対応（documented request/response contract）。実 server smoke test pending. |
+| VLLM-001 | vllm | POST `/v1/completions` | OpenAI completion input → choices + usage JSON | Shared `tg_parameters` OpenAI-compatible serializer/parser; `test/test_llm_backend.cpp` | 一部対応。model must support generate; count path uses completion usage. |
+| VLLM-002 | vllm | POST `/v1/chat/completions` | model/messages/options → chat choices JSON | Shared OpenAI-compatible serializer/parser; backend selection/port defaults in `test/test.cpp` | 一部対応. Requires a model chat template; streaming/tools not fully covered. |
+| VLLM-003 | vllm | GET `/v1/models`; POST responses/embeddings/audio/tokenizer/pooling/classification/score/rerank/realtime and admin routes | task-dependent JSON/multipart/SSE → task result | `GET /v1/models` via `llm::list_models`; `POST /v1/embeddings` via `llm::create_embeddings`; CLI and executor tests in `test/test.cpp`, `test/test_llm_backend.cpp` | 一部対応。Embeddings supports text batches and JSON additional fields; server must use an embedding model; remaining APIs are unsupported. |
+| OLL-001 | ollama | POST `/api/generate` | model/prompt/options, `stream:false` → `response`, `prompt_eval_count` | Native `kc_parameters` Ollama schema; `test/test_llm_backend.cpp` | 一部対応。completion and count request; validate zero-prediction behavior against supported releases. |
+| OLL-002 | ollama | POST `/api/chat` | model/messages/options, `stream:false` → message response | Native `kc_parameters` Ollama schema; backend selection/port defaults in `test/test.cpp` | 一部対応。images and tool calls are not yet handled by response parser. |
+| OLL-003 | ollama | POST `/api/create`, `/api/copy`, `/api/pull`, `/api/push`, `/api/show`, `/api/embed`; DELETE `/api/delete`; GET `/api/tags`, `/api/ps`, `/api/version` | model/admin/embedding request → stream or JSON metadata/vector | `GET /api/tags` via `llm::list_models`; `GET /api/ps` via `llm::list_running_models`; `GET /api/version` via `llm::get_ollama_version`; `POST /api/show` via `llm::show_model`; lifecycle routes via `llm::manage_ollama_model`; `POST /api/embed` via `llm::create_embeddings`; CLI and executor tests in `test/test.cpp`, `test/test_llm_backend.cpp`, `test/test_public_api.cpp` | 一部対応。Documented native model, embedding, version, and lifecycle operations listed here are supported; streaming responses return raw JSON/NDJSON. Other and legacy routes remain unsupported. |
+| TG-001 | tg | POST `/v1/completions` | Completion JSON → completion JSON または SSE | LLM completion request/response parser; `test/test_llm.cpp` generic contract | 一部対応。stream 未対応 |
+| TG-002 | tg | POST `/v1/chat/completions` | messages/chat options → chat JSON または SSE | LLM chat request/response parser; `test/test_llm.cpp` generic contract | 一部対応。stream 未対応 |
+| TG-003 | tg | POST `/v1/messages` | Anthropic messages JSON → Anthropic response/SSE | なし | 未対応 |
+| TG-004 | tg | GET `/v1/models`, `/v1/models/{model}` | auth/model path → model list/info JSON | なし | 未対応 |
+| TG-005 | tg | GET `/v1/billing/usage` | date query → usage JSON | なし | 未対応 (compat stub) |
+| TG-006 | tg | POST `/v1/audio/transcriptions` | multipart audio + form fields → transcription JSON | なし | 可変。speech_recognition dependency |
+| TG-007 | tg | POST `/v1/images/generations` | image prompt JSON → image data JSON | なし | 可変。image model |
+| TG-008 | tg | POST `/v1/embeddings` | input/encoding JSON → vector JSON | なし | 可変。embedding model |
+| TG-009 | tg | POST `/v1/moderations` | input JSON → moderation JSON | なし | 未対応 |
+| TG-010 | tg | GET `/v1/internal/health` | auth → status JSON | なし | 未対応 |
+| TG-011 | tg | POST `/v1/internal/encode`, `/decode`, `/token-count` | text/tokens JSON → tokens/text/length JSON | token count endpoint only; `test/test_builtin.cpp`, `test/test.cpp` | 一部対応 |
+| TG-012 | tg | POST `/v1/internal/logits`, `/chat-prompt` | generation/chat JSON → logits/prompt JSON | なし | 未対応 |
+| TG-013 | tg | POST `/v1/internal/stop-generation` | auth → `OK` | なし | 未対応 |
+| TG-014 | tg | GET `/v1/internal/model/info`, `/list`; POST `/load`, `/unload` | model info/admin request → info/`OK` | なし | 未対応。admin auth |
+| TG-015 | tg | GET `/v1/internal/lora/list`; POST `/load`, `/unload` | LoRA names/admin request → names/`OK` | なし | 未対応。admin auth |
+| TG-016 | tg | OPTIONS `/` | API auth → `OK` | なし | 未対応 |
+| KC-001 | kc native | POST `/api/v1/generate`, `/api/latest/generate`, `/request` | Kobold or legacy prompt JSON → generation JSON | LLM generation endpoint config; generic LLM tests | 一部対応。wire/schema needs endpoint-specific tests |
+| KC-002 | kc native | POST `/api/extra/generate/stream` | generation JSON → SSE | なし | 未対応 |
+| KC-003 | kc native | GET/POST `/api/extra/generate/check`; POST `/api/extra/abort` | genkey/query → current text/abort result | なし | 未対応 |
+| KC-004 | kc native | GET/POST `/api/extra/last_logprobs` | generation state → token probability JSON | なし | 未対応 |
+| KC-005 | kc native | POST `/api/extra/tokencount`, `/tokenize`, `/detokenize`, `/json_to_grammar` | text/messages/token IDs/schema → counts/tokens/text/grammar | token count only, target configurable; generic test | 一部対応 |
+| KC-006 | kc native | GET `/api/v1/model`, `/api/v1/config/{max_length,max_context_length,soft_prompt,soft_prompts_list}`, `/api/v1/info/version`, `/api/extra/{version,true_max_context_length,perf,preloadstory}` | no/optional auth → model/config/version/perf JSON | なし | 未対応 |
+| KC-007 | kc optional | POST `/api/extra/websearch`, `/api/extra/multiplayer/{status,getstory,setstory}`, `/api/extra/data/{list,load,save}` | feature-specific JSON → feature state/data | なし | 可変。flags/files |
+| KC-008 | kc optional | POST `/api/extra/transcribe`, `/tts`, `/embeddings`, `/music/{prepare,generate}`; GET `/api/extra/speakers_list` | audio/text/model-dependent JSON or binary → transcript/audio/vector/metadata | なし | 可変。loaded models |
+| KC-009 | kc OpenAI | POST `/v1/completions`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`; GET `/v1/models` | OpenAI JSON → JSON/stream/vector/model list | LLM completions/chat and token-count only | 一部対応; remaining formats and endpoints unsupported |
+| KC-010 | kc OpenAI audio/images | POST `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/images/generations`, `/v1/images/edits`; GET `/v1/audio/voices` | multipart/JSON → text/audio/image/voice list | なし | 可変。models |
+| KC-011 | kc compatibility | POST `/v1/messages`; Ollama POST `/api/{generate,chat,embed,show}`, GET `/api/{tags,ps,version}` | Anthropic/Ollama protocol payload → corresponding protocol response | なし | 未対応。compat API |
+| KC-012 | kc compatibility | A1111 image POST `/sdapi/v1/{txt2img,img2img,upscale,extra-single-image,interrogate}`; Comfy `/prompt`, `/upload/image`; XTTS `/tts_to_audio` | protocol-specific JSON/multipart → image/audio/job data | なし | 未対応。requires loaded models |
+| KC-013 | kc admin/MCP | GET `/api/admin/list_options`; POST `/api/admin/{reload_config,check_state,save_state,load_state,clear_state}`; POST `/mcp` | admin/MCP JSON-RPC → options/state/result | なし | 可変。admin/flags |
+| KC-014 | kc utility | GET `/api`, `/docs`, `/v1`, `/props`, `/slots`, `/.well-known/serviceinfo`, `/` and UI asset paths | no body → docs/metadata/UI/501 | なし |未対応または API 資産扱い未分類 |
+| SD-001 | sd | POST `/sdapi/v1/txt2img`, `/img2img` | A1111 generation schema/base64 images → image/info JSON | `sd::send_request`; `test/test_sd.cpp` request, response and errors | 一部対応。selected image and fields only |
+| SD-002 | sd | POST `/sdapi/v1/extra-single-image`, `/extra-batch-images`, `/png-info` | image/upscaler or PNG base64 → processed image/info JSON | なし | 未対応 |
+| SD-003 | sd | GET `/sdapi/v1/progress`; POST `/interrogate`, `/interrupt`, `/skip` | progress query/image/control → progress/caption/control result | なし | 未対応 |
+| SD-004 | sd | GET/POST `/sdapi/v1/options` | none/config JSON → options JSON | なし | 未対応 |
+| SD-005 | sd | GET `/sdapi/v1/{cmd-flags,samplers,schedulers,upscalers,latent-upscale-modes,sd-models,sd-vae,hypernetworks,face-restorers,realesrgan-models,prompt-styles,embeddings}` | queryless → lists/metadata JSON | なし | 未対応 |
+| SD-006 | sd | POST `/sdapi/v1/{refresh-embeddings,refresh-checkpoints,refresh-vae}` | empty/optional JSON → operation result | なし | 未対応 |
+| SD-007 | sd | POST `/sdapi/v1/create/{embedding,hypernetwork}`, `/train/{embedding,hypernetwork}` | training/create schemas → status/results | なし | 可変。models/training config |
+| SD-008 | sd | GET `/sdapi/v1/memory`, `/scripts`, `/script-info`, `/extensions`; POST `/unload-checkpoint`, `/reload-checkpoint` | no/optional body → memory/scripts/extensions/model state | なし | 未対応 |
+| SD-009 | sd optional | POST `/sdapi/v1/{server-kill,server-restart,server-stop}` | request → server control result | なし | 可変. `api_server_stop` flag |
+| SB-001 | sb | GET/POST `/voice` | query (text + synthesis parameters) → WAV bytes | `sb::send_request` GET and `sb::send_post_request` POST query; `test/test_sb.cpp` method/query/body/response/status | 実装済み・検証済み。POST recommended by upstream; request parameters are query fields for both methods |
+| SB-002 | sb | POST `/g2p` | text query → phoneme/tone JSON | `sb::get_phonemes`; `test/test_sb.cpp` URL/JSON/status | 実装済み・検証済み |
+| SB-003 | sb | GET `/models/info`; POST `/models/refresh` | none → model metadata; refresh → model metadata | `sb::get_models_info`, `sb::refresh_models`; `test/test_sb.cpp` methods/body/JSON/status | 実装済み・検証済み |
+| SB-004 | sb | GET `/status` | none → CPU/memory/device JSON | `sb::get_status`; `test/test_sb.cpp` method/JSON/status | 実装済み・検証済み |
+| SB-005 | sb | GET `/tools/get_audio` | local WAV path query → WAV bytes | `sb::get_audio`; `test/test_sb.cpp` encoded path/binary response | 実装済み・検証済み |
+| CU-001 | cu | POST `/prompt`; GET `/prompt` | workflow/client_id/extra_data → prompt_id/queue status JSON | `cu::send_request`, `test/test_cu.cpp` | 一部対応 (POST); GET status absent |
+| CU-002 | cu | GET `/history`, `/history/{prompt_id}`; POST `/history` | optional `max_items` / `offset`, prompt ID, or `{"clear":true}` / `{"delete":[prompt_id...]}` → history JSON / empty success | `cu::manage_api`; CLI `comfy history`, `history-item`, `history-update`; `test/test_cu.cpp`, `test/test.cpp` | Partial: all documented GET and POST forms are mapped and contract-tested; runtime ComfyUI validation pending. |
+| CU-003 | cu | GET `/queue`; POST `/queue` | none / `{"clear":true}` or `{"delete":[prompt_id...]}` → queue state / empty success | `cu::manage_api`; CLI `comfy queue`, `comfy queue-update`; `test/test_cu.cpp`, `test/test.cpp` | Partial: GET state and POST queue operations; runtime ComfyUI validation pending. |
+| CU-004 | cu | POST `/interrupt`, `/free` | optional `prompt_id` / `unload_models`, `free_memory` booleans → empty success | `cu::manage_api`; CLI `comfy interrupt`, `comfy free`; `test/test_cu.cpp`, `test/test.cpp` | Partial: documented request fields pass through; runtime ComfyUI validation pending. |
+| CU-005 | cu | GET `/ws` WebSocket | optional clientId → text JSON status/execution/progress/error events and binary preview frames | `cu::receive_events`; CLI `comfy events`; text frames pass through, binary frames are Base64 JSON envelopes; `test/test_cu.cpp`, `test/test.cpp` | Partial: receive-only stream is contract-tested; WebSocket runtime handshake and server event compatibility remain to verify. |
+| CU-006 | cu | GET `/object_info`, `/object_info/{node_class}` | optional node class → node schema JSON | `cu::manage_api`; CLI `comfy object-info`, `--cu.node-class`; `test/test_cu.cpp`, `test/test.cpp` | Partial: full and single-class targets are contract-tested; runtime ComfyUI validation pending. |
+| CU-007 | cu | GET `/models`, `/models/{folder}`, `/embeddings`, `/extensions`, `/features` | optional folder → type/model/embedding/extension/feature JSON | `cu::manage_api`; CLI `comfy models`, `models-folder`, `embeddings`, `extensions`, `features`; `--cu.model-folder`; `test/test_cu.cpp`, `test/test.cpp` | Partial: all documented targets are contract-tested; runtime ComfyUI validation pending. |
+| CU-008 | cu | POST `/upload/image`, `/upload/mask` | multipart `image`, optional `overwrite`/`type`/`subfolder`; mask also requires `original_ref` → uploaded file reference JSON | `cu::upload_file`; CLI `comfy upload-image`, `upload-mask`; `--cu.upload-file`, `--cu.api-options`; `test/test_cu.cpp`, `test/test.cpp` | Contract-tested: multipart fields, response, binary file read, malformed filename rejection, and reader failure; runtime ComfyUI validation pending. |
+| CU-009 | cu | GET `/view`, `/view_metadata/{folder_name}` | `/view`: filename/type/subfolder/preview/channel query → image bytes; metadata: folder path + safetensors filename → metadata JSON | `cu::manage_api`; CLI `comfy view` (binary stdout), `comfy view-metadata`, `--cu.metadata-folder`, `--cu.api-options`; `test/test_cu.cpp`, `test/test.cpp` | Contract-tested: method, encoded route/query, binary body and traversal rejection; runtime ComfyUI validation pending. |
+| CU-010 | cu | GET `/system_stats`, `/default_workflow` | none → device/runtime stats JSON or workflow JSON | なし | 未対応 |
+| CU-011 | cu | GET `/api/jobs` and any related job routes | status/workflow/sort/page query → job JSON | なし | 未調査 beyond official route docs |
+| CU-012 | cu | GET `/users`; POST `/users` (multi-user mode) | none/user creation → user JSON | なし | 可変。multi-user mode |
+| CU-013 | cu | GET `/userdata`, `/v2/userdata`, `/userdata/{file}`; POST `/userdata/{file}`, `/userdata/{file}/move/{dest}`; DELETE `/userdata/{file}` | directory/file/path and upload content → listing/file/mutation result | なし | 未対応 |
+| CU-014 | cu | GET `/`, `/extensions`, `/workflow_templates` | none → UI asset/extension/template metadata | なし | 未対応/要 route registry 照合 |
+
+### 初回抽出の制約
+
+- `TG-*` は公式 `modules/api/script.py` で見えた標準 OpenAI/Anthropic routes。`modules/api` の全ファイルを統合し、UI/API docs、各 integration/router、起動条件との照合は未完了。
+- `KC-*` は公式 endpoint reference の掲載群を family 単位にまとめたもの。個別 operation method/alias と body/response schema の一件ずつの抽出は未完了。`/api` が省略する endpoint が同 reference に明記されているため、runtime docs/source との再照合が必要。
+- `SD-*` は公式 `modules/api/api.py` registration list。各 pydantic request/response schema の field 完全展開、Gradio routes と拡張 callbacks の照合は未完了。
+- `SB-*` は調査した `server_fastapi.py` の route declarations。5 operation を `public_api::http_executor` 経由で実装・テスト済み。query schema と OpenAPI dependency route の完全比較は未完了。
+- `CU-*` は Comfy-Org docs の built-in route catalog から抽出。`server.py` route groups, user/asset API, version差分、custom node routes の全件照合は未完了。
+
+## 操作ごとの追跡フィールド
+
+| フィールド | 内容 |
+| --- | --- |
+| backend/API family | backend 識別子と互換プロトコル名。 |
+| method / path | HTTP verb、path、alias または WebSocket handshake/path。 |
+| 入力 | path/query/header/body/form/file/frame/message の schema と必須性。 |
+| 出力 | status、header、JSON/binary/stream/WebSocket event の schema。 |
+| availability | upstream version/commit、起動 flag、モデル、extension/custom route 条件。 |
+| Hermit 実装 | source file、public option/API、サポートする操作と未対応部分。 |
+| 回帰テスト | test file/case。Mock で request/response contract と失敗を確認する。 |
+| 状態・根拠 | 状態、公式 source URL、調査日、必要時は固定 commit SHA。 |
+
+## 初回計画
+
+1. `tg`、`kc`、`sd`、`sb`、`cu` ごとに公式の route registry と OpenAPI/schema を収集し、操作を method/path 単位に分解する。
+2. 各 route を既存コード・設定・CLI・tests に対応付け、未対応と未検証を区別する。
+3. 同じ transport/request model を使える操作群を整理し、公開 CLI/API の必要性と安全な入力・出力変換を設計する。
+4. 独立した小さな API 群から実装し、各変更で injected executor による成功・境界・失敗テストと資料更新を行う。
+5. 上流版・任意 flag・extension/custom route による動的な提供差分を実行時 inventory で閉じ、未対応・未確認がなくなるまで反復する。
+
+現時点で未解決の主要阻害要因は endpoint の桁違いの多さと、拡張 API の実行環境依存である。これは要求を狭める根拠にせず、ISS-030 の作業計画に従って一群ずつ対応する。

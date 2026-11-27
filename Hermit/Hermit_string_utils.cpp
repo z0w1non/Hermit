@@ -101,6 +101,16 @@ namespace Hermit
             return result;
         }
 
+        std::string truncate_prompt_by_config(std::string_view prompt, const config& cfg,
+            const std::function<int(std::string_view)>& token_counter)
+        {
+            std::string result;
+            int remaining_tokens{ cfg.llm.backend->get_truncation_length() - cfg.llm.backend->get_max_tokens() };
+            const token_count_string truncated{ truncate_by_tokens(prompt, remaining_tokens, cfg, false, token_counter) };
+            result += truncated.str;
+            return result;
+        }
+
         std::string base64_encode(std::string_view input)
         {
             using namespace boost::archive::iterators;
@@ -247,6 +257,12 @@ namespace Hermit
 
         token_count_string truncate_by_tokens(std::string_view string, int max_tokens, const config& cfg, bool reverse)
         {
+            return truncate_by_tokens(string, max_tokens, cfg, reverse, {});
+        }
+
+        token_count_string truncate_by_tokens(std::string_view string, int max_tokens, const config& cfg, bool reverse,
+            const std::function<int(std::string_view)>& token_counter)
+        {
             token_count_string result;
 
             std::vector<std::string> lines;
@@ -257,7 +273,7 @@ namespace Hermit
                 {
                     for (; first != last; ++first)
                     {
-                        const int next_tokens{ cfg.lru_cache.get_tokens(*first) };
+                        const int next_tokens{ token_counter ? token_counter(*first) : cfg.lru_cache.get_tokens(*first) };
                         if (result.tokens + next_tokens > max_tokens)
                         {
                             break;

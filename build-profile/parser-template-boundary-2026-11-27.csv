@@ -1,0 +1,5 @@
+"configuration","source","frontend_seconds","backend_seconds","total_seconds"
+"before","Hermit_parser.cpp","37.02576","0.41195","37.43771"
+"after","Hermit_parser.cpp","19.04035","0.31342","19.35377"
+"before","Hermit_parser_visitors.cpp","17.31892","0.06504","17.38396"
+"after","Hermit_parser_visitors.cpp","13.26766","0.24231","13.50997"

@@ -11,7 +11,7 @@ namespace Hermit::parser {
 template<typename Iterator> struct document_grammar : boost::spirit::qi::grammar<Iterator, abstract_syntax_tree_type()> {
     document_grammar();
     bool parse_expression_statement(std::string_view input, expression_statement_type& result) const {
-#if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS)
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS)
         Iterator first{ input.begin() };
         const Iterator last{ input.end() };
         return boost::spirit::qi::phrase_parse(first, last, assignment_document.expression_statement, boost::spirit::qi::space, result) && first == last;
@@ -22,7 +22,7 @@ template<typename Iterator> struct document_grammar : boost::spirit::qi::grammar
 #endif
     }
     bool parse_statement(std::string_view input, statement_type& result) const {
-#if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS)
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT)
         Iterator first{ input.begin() };
         const Iterator last{ input.end() };
         return boost::spirit::qi::phrase_parse(first, last, assignment_document.statement, boost::spirit::qi::space, result) && first == last;
@@ -33,7 +33,7 @@ template<typename Iterator> struct document_grammar : boost::spirit::qi::grammar
 #endif
     }
     bool parse_statement_placeholder(std::string_view input, placeholder_result_type& result) const {
-#if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS)
+#if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS) || defined(HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT)
         Iterator first{ input.begin() };
         const Iterator last{ input.end() };
         return boost::spirit::qi::phrase_parse(first, last, assignment_document.statement_placeholder, boost::spirit::qi::space, result) && first == last;
