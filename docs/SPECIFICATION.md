@@ -906,8 +906,7 @@ name                  = identifier ;
 | [ISS-032](ISSUES.md) | 低 | sandbox loopback test の残留 process が test.exe をロックした。 | 解決済み。PID 37232 を特定・終了して既定名 relink 成功。loopback test に時間上限と process 回収を必須化。 |
 | [ISS-028](ISSUES.md) | 低 | test.pdb の別プロセス保持時に C1041 が起きる。 | 継続管理。再発時に保持プロセスと PID を記録する。 |
 | [ISS-029](ISSUES.md) | 高 | Hermit app 差分リンクで LNK1103 が発生していた。 | 解決済み。full LTCG の差分リンク成功を維持・監視する。 |
-| [ISS-030](ISSUES.md) | 高 | 対象バックエンド全 Web API の対応が未完了。 | 進行中。LM Studio Anthropic Messages JSON/SSE、Jev System One JSON、vLLM batch chat JSON を契約テスト付きで追加。Release x64 solution Build成功。loopback 10件を除外したnetwork-free 247/247 tests成功。sandbox network restriction と実 server 確認は[ISS-037](ISSUES.md)で追跡中。公式操作一覧は [BACKEND_WEB_API_COVERAGE.md](BACKEND_WEB_API_COVERAGE.md) で追跡し、未対応操作と実 server 検証を順次進める。 |
-| [ISS-037](ISSUES.md) | 高 | loopback TCP tests が sandbox network restriction 下で終了する。 | sandbox 内の localhost connect は WSAEACCES (10013)。network-free 247/247 tests 成功、loopback tests は権限を持つ実行環境で再確認する。 |
+| [ISS-030](ISSUES.md) | 高 | 対象バックエンド全 Web API の対応が未完了。 | 進行中。LM Studio Anthropic Messages JSON/SSE、Jev System One JSON、vLLM batch chat JSON を契約テスト付きで追加。Release x64 solution Build成功。network-free 247/247 tests、loopback 9/9 tests成功。実 server 確認と未対応操作は引き続き追跡。公式操作一覧は [BACKEND_WEB_API_COVERAGE.md](BACKEND_WEB_API_COVERAGE.md) で追跡する。 |
 | [ISS-031](ISSUES.md) | 中 | CLI ヘルプとオプション資料に誤記があり、SD の seed resize 名が重複していた。 | 解決済み。共通名を維持し、img2img 専用名を分離。ヘルプ・資料と回帰テストを更新した。 |
 | [ISS-033](ISSUES.md) | 中 | CLI がフラットな `--mode` とハイフン連結オプションに依存する。 | 解決済み。サブコマンド、`--namespace.property`、dotted INI key へ置換し、旧構文を拒否する。 |
 

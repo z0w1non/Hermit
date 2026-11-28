@@ -177,6 +177,7 @@ TEST(tcp, rejects_response_body_over_limit_from_content_length)
     transport.connect("127.0.0.1", port);
     const Hermit::tcp::request_type request{ Hermit::tcp::make_get_json_request("127.0.0.1", "/oversized") };
     EXPECT_THROW(transport.request(request), Hermit::http_receive_exception);
+    server.join();
 }
 
 TEST(tcp, delivers_http_response_body_incrementally_to_stream_handler)
