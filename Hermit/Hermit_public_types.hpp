@@ -10,7 +10,7 @@
 
 namespace Hermit::public_api
 {
-    enum class http_method { get, post, delete_ };
+    enum class http_method { get, post, put, patch, delete_, head, options };
 
     using wait_callback = std::function<void(std::chrono::milliseconds)>;
     using binary_storage = std::function<void(std::string_view path, std::string_view data)>;
@@ -43,6 +43,13 @@ namespace Hermit::public_api
     };
 
     using http_executor = std::function<http_response_data(const http_request_data&)>;
+    using http_stream_handler = std::function<bool(std::string_view)>;
+    struct http_stream_response_data
+    {
+        int status_code{};
+        std::string content_type;
+    };
+    using http_stream_executor = std::function<http_stream_response_data(const http_request_data&, const http_stream_handler&)>;
 
     // Legacy string-only boundary retained for source compatibility.
     using http_request = std::function<std::string(std::string_view host, std::string_view target, std::string_view body)>;

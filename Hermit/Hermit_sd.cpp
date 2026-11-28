@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <stdexcept>
 #include <utility>
@@ -96,6 +98,17 @@ namespace Hermit
             return json;
         }
 
+        static void apply_generation_options(const config& cfg, nlohmann::json& request)
+        {
+            if (cfg.sd.generation_options.empty()) return;
+            const nlohmann::json options{ nlohmann::json::parse(cfg.sd.generation_options) };
+            if (!options.is_object())
+            {
+                throw std::invalid_argument{ "--sd.generation-options requires a JSON object" };
+            }
+            request.update(options);
+        }
+
         nlohmann::json make_adetailer_request(const config& cfg)
         {
             nlohmann::json json(nlohmann::json::object());
@@ -168,6 +181,8 @@ namespace Hermit
                 json.update(make_abg_remover_request());
             }
 
+            apply_generation_options(cfg, json);
+
             return json;
         }
 
@@ -194,6 +209,7 @@ namespace Hermit
             {
                 json.update(make_abg_remover_request());
             }
+            apply_generation_options(cfg, json);
             return json;
         }
 
@@ -300,6 +316,26 @@ namespace Hermit
                     }
                 }
             }
+            else if (action == "routes")
+            {
+                target = "/openapi.json";
+                method = http_method::get;
+                if (!cfg.sd.api_options.empty()) throw std::invalid_argument{ "sd-api routes does not accept --sd.api-options" };
+            }
+            else if (action == "pending-tasks" || action == "quicksettings-hint" || action == "ping"
+                || action == "profile-startup" || action == "sysinfo" || action == "sysinfo-download")
+            {
+                target = "/internal/" + action;
+                method = http_method::get;
+                if (!cfg.sd.api_options.empty()) throw std::invalid_argument{ "sd-api " + action + " does not accept --sd.api-options" };
+            }
+            else if (action == "internal-progress")
+            {
+                target = "/internal/progress";
+                const nlohmann::json options{ nlohmann::json::parse(cfg.sd.api_options) };
+                if (!options.is_object()) throw std::invalid_argument{ "sd-api internal-progress requires a JSON object" };
+                body = options.dump();
+            }
             else if (action == "options")
             {
                 target = "/sdapi/v1/options";
@@ -353,7 +389,8 @@ namespace Hermit
                     throw std::invalid_argument{ "sd-api " + action + " does not accept --sd.api-options" };
                 }
             }
-            else if (action == "unload-checkpoint" || action == "reload-checkpoint")
+            else if (action == "unload-checkpoint" || action == "reload-checkpoint"
+                || action == "server-kill" || action == "server-restart" || action == "server-stop")
             {
                 target = "/sdapi/v1/" + action;
                 if (!cfg.sd.api_options.empty())
@@ -403,6 +440,124 @@ namespace Hermit
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
             return response.body;
+        }
+
+        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor)
+        {
+            return make_api_request(cfg, executor, [](const std::filesystem::path& path, std::ios_base::openmode mode)
+            {
+                return filesystem::read_file_to_string(path, mode);
+            });
+        }
+
+        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor,
+            const filesystem::file_reader& reader)
+        {
+            using public_api::http_method;
+            http_method method;
+            const std::string& method_name{ cfg.sd.api_method };
+            if (method_name == "GET") method = http_method::get;
+            else if (method_name == "POST") method = http_method::post;
+            else if (method_name == "PUT") method = http_method::put;
+            else if (method_name == "PATCH") method = http_method::patch;
+            else if (method_name == "DELETE") method = http_method::delete_;
+            else if (method_name == "HEAD") method = http_method::head;
+            else if (method_name == "OPTIONS") method = http_method::options;
+            else throw std::invalid_argument{ "sd-api request method must be GET, POST, PUT, PATCH, DELETE, HEAD, or OPTIONS" };
+
+            const std::string& path{ cfg.sd.api_path };
+            const std::string decoded_path{ boost::urls::pct_string_view{ path }.decode() };
+            const bool has_dot_segment{ [&decoded_path]
+            {
+                std::size_t segment_start{};
+                while (segment_start <= decoded_path.size())
+                {
+                    const std::size_t segment_end{ decoded_path.find('/', segment_start) };
+                    const std::string_view segment{ decoded_path.data() + segment_start,
+                        (segment_end == std::string::npos ? decoded_path.size() : segment_end) - segment_start };
+                    if (segment == "." || segment == "..") return true;
+                    if (segment_end == std::string::npos) break;
+                    segment_start = segment_end + 1;
+                }
+                return false;
+            }() };
+            if (path.empty() || path.front() != '/' || path.find('#') != std::string::npos
+                || path.find('\\') != std::string::npos || decoded_path.find('\\') != std::string::npos
+                || path.starts_with("//") || decoded_path.starts_with("//") || has_dot_segment
+                || std::any_of(path.begin(), path.end(), [](unsigned char character)
+                    { return character <= 0x20 || character == 0x7f; }))
+            {
+                throw std::invalid_argument{ "sd-api request path must be an absolute local path without traversal or fragment" };
+            }
+            if (!cfg.sd.api_options.empty() && !cfg.sd.api_body_file.empty())
+            {
+                throw std::invalid_argument{ "sd-api request accepts either --sd.api-options or --sd.api-body-file, not both" };
+            }
+            std::string body;
+            if (!cfg.sd.api_body_file.empty())
+            {
+                const std::filesystem::path body_path{ filesystem::string_to_path_by_config(cfg.sd.api_body_file, cfg) };
+                body = filesystem::read_file_to_string(body_path, std::ios::binary, reader);
+            }
+            else if (!cfg.sd.api_options.empty())
+            {
+                const nlohmann::json options{ nlohmann::json::parse(cfg.sd.api_options) };
+                if (!options.is_object() && !options.is_array())
+                {
+                    throw std::invalid_argument{ "sd-api request body must be a JSON object or array" };
+                }
+                body = options.dump();
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.sd.host, cfg.sd.port, path, std::move(body), std::move(options)) };
+            request.method = method;
+            if (!cfg.sd.api_content_type.empty())
+            {
+                if (std::any_of(cfg.sd.api_content_type.begin(), cfg.sd.api_content_type.end(), [](unsigned char character)
+                    { return character < 0x20 || character == 0x7f; }))
+                {
+                    throw std::invalid_argument{ "sd-api request Content-Type contains a control character" };
+                }
+                request.content_type = cfg.sd.api_content_type;
+            }
+            if (!cfg.sd.api_headers.empty())
+            {
+                const nlohmann::json headers{ nlohmann::json::parse(cfg.sd.api_headers) };
+                if (!headers.is_object()) throw std::invalid_argument{ "sd-api request headers must be a JSON object of string values" };
+                const std::string token_characters{ "!#$%&'*+-.^_`|~" };
+                for (const auto& [name, value] : headers.items())
+                {
+                    const bool valid_name{ !name.empty() && std::all_of(name.begin(), name.end(), [&](unsigned char character)
+                    {
+                        return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
+                            || (character >= '0' && character <= '9') || token_characters.find(static_cast<char>(character)) != std::string::npos;
+                    }) };
+                    std::string normalized_name{ name };
+                    std::transform(normalized_name.begin(), normalized_name.end(), normalized_name.begin(), [](unsigned char character)
+                    {
+                        return static_cast<char>(std::tolower(character));
+                    });
+                    if (!valid_name || normalized_name == "host" || normalized_name == "content-length"
+                        || normalized_name == "transfer-encoding" || normalized_name == "connection" || normalized_name == "content-type"
+                        || !value.is_string())
+                    {
+                        throw std::invalid_argument{ "sd-api request contains an invalid, reserved, or non-string header" };
+                    }
+                    const std::string header_value{ value.get<std::string>() };
+                    if (std::any_of(header_value.begin(), header_value.end(), [](unsigned char character)
+                        { return (character < 0x20 && character != '\t') || character == 0x7f; }))
+                    {
+                        throw std::invalid_argument{ "sd-api request header value contains a control character" };
+                    }
+                    request.headers.emplace(name, header_value);
+                }
+            }
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response;
         }
     } // namespace sd
 

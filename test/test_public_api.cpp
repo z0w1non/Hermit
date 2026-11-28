@@ -83,6 +83,53 @@ TEST(public_api, adapts_executor_with_status_and_headers)
     EXPECT_EQ(response.content_type, "application/json");
 }
 
+TEST(public_api, adapts_http_stream_executor_with_metadata_and_incremental_callback)
+{
+    const Hermit::public_api::http_stream_executor executor{ Hermit::public_api::make_http_stream_executor(
+        [](std::string_view host, std::string_view port, const Hermit::tcp::request_type& request,
+            const Hermit::tcp::stream_handler& handler)
+        {
+            EXPECT_EQ(host, "stream-host");
+            EXPECT_EQ(port, "1234");
+            EXPECT_EQ(request.method(), boost::beast::http::verb::post);
+            EXPECT_EQ(request[boost::beast::http::field::content_type], "application/json");
+            EXPECT_TRUE(handler("data: first\n\n"));
+            return Hermit::tcp::stream_response_type{ boost::beast::http::status::ok, 11 };
+        }) };
+    Hermit::public_api::http_request_data request;
+    request.host = "stream-host";
+    request.port = "1234";
+    request.target = "/v1/responses";
+    request.body = R"({"stream":true})";
+    std::string chunk;
+    const Hermit::public_api::http_stream_response_data response{ executor(request, [&chunk](std::string_view data)
+    {
+        chunk.append(data);
+        return true;
+    }) };
+    EXPECT_EQ(response.status_code, 200);
+    EXPECT_EQ(chunk, "data: first\n\n");
+}
+
+TEST(public_api, adapts_http_stream_executor_with_get_method_without_json_content_type)
+{
+    const Hermit::public_api::http_stream_executor executor{ Hermit::public_api::make_http_stream_executor(
+        [](std::string_view, std::string_view, const Hermit::tcp::request_type& request,
+            const Hermit::tcp::stream_handler&)
+        {
+            EXPECT_EQ(request.method(), boost::beast::http::verb::get);
+            EXPECT_EQ(request.find(boost::beast::http::field::content_type), request.end());
+            return Hermit::tcp::stream_response_type{ boost::beast::http::status::ok, 11 };
+        }) };
+    Hermit::public_api::http_request_data request;
+    request.host = "stream-host";
+    request.port = "1234";
+    request.target = "/call/api_name/event_id";
+    request.method = Hermit::public_api::http_method::get;
+    const Hermit::public_api::http_stream_response_data response{ executor(request, [](std::string_view) { return true; }) };
+    EXPECT_EQ(response.status_code, 200);
+}
+
 TEST(public_api, adapts_delete_http_method_with_json_body)
 {
     const Hermit::public_api::http_executor executor{ Hermit::public_api::make_http_executor(

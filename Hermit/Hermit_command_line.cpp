@@ -183,6 +183,12 @@ namespace Hermit
                 ("llm.host", po::value(&cfg.llm.host)->default_value("localhost"), "LLM host")
                 ("llm.port", po::value(&cfg.llm.port)->default_value("5000"), "LLM port")
                 ("llm.api-key", po::value(&cfg.llm.api_key)->default_value(""), "LLM API key")
+                ("llm.api-method", po::value(&cfg.llm.api_method)->default_value("GET"), "backend-api HTTP method")
+                ("llm.api-path", po::value(&cfg.llm.api_path)->default_value("/"), "backend-api local route path")
+                ("llm.api-options", po::value(&cfg.llm.api_options)->default_value(""), "backend-api JSON request body")
+                ("llm.api-body-file", po::value(&cfg.llm.api_body_file)->default_value(""), "backend-api raw/binary request body file")
+                ("llm.api-content-type", po::value(&cfg.llm.api_content_type)->default_value(""), "backend-api request Content-Type")
+                ("llm.api-headers", po::value(&cfg.llm.api_headers)->default_value(""), "backend-api additional HTTP headers as a JSON string map")
                 ("llm.model", po::value(&cfg.llm.model)->default_value(""), "Model identifier for LLM backends that require one")
                 ("llm.completions-target", po::value(&cfg.llm.completions_target), "LLM completions target")
                 ("llm.token-count-target", po::value(&cfg.llm.token_count_target), "LLM token count target")
@@ -321,6 +327,12 @@ namespace Hermit
                 ("sd.host", po::value(&cfg.sd.host)->default_value("localhost"), "SD host")
                 ("sd.port", po::value(&cfg.sd.port)->default_value("7860"), "SD port")
                 ("sd.api-options", po::value(&cfg.sd.api_options)->default_value(""), "Stable Diffusion API request options as a JSON object")
+                ("sd.api-method", po::value(&cfg.sd.api_method)->default_value("GET"), "HTTP method for sd-api request: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+                ("sd.api-path", po::value(&cfg.sd.api_path)->default_value("/openapi.json"), "Absolute local API path for sd-api request")
+                ("sd.api-body-file", po::value(&cfg.sd.api_body_file)->default_value(""), "Binary request body file for sd-api request")
+                ("sd.api-content-type", po::value(&cfg.sd.api_content_type)->default_value(""), "Content-Type for sd-api request body")
+                ("sd.api-headers", po::value(&cfg.sd.api_headers)->default_value(""), "Additional sd-api request headers as a JSON string map")
+                ("sd.generation-options", po::value(&cfg.sd.generation_options)->default_value(""), "Additional A1111 txt2img/img2img request fields as a JSON object")
                 ("sd.prompt-file", po::value(&cfg.sd.prompt_file)->default_value("prompt"), "SD prompt file")
                 ("sd.negative-prompt-file", po::value(&cfg.sd.negative_prompt_file)->default_value("negative_prompt"), "SD negative prompt file")
                 ("sd.output-file", po::value(&cfg.sd.output_file)->default_value("{{datetime}}.png"), "SD output PNG file")
@@ -535,8 +547,16 @@ namespace Hermit
                     << "  Hermit models show --backend ollama --llm.model <model> [options]\n"
                     << "  Hermit models running --backend ollama [options]\n"
                     << "  Hermit models version --backend ollama [options]\n"
+                    << "  Hermit models <load|unload|download|download-status> --backend lmstudio --llm.model-action-options <json> [options]\n"
+                    << "  Hermit responses create --backend lmstudio --llm.api-options <json> [options]\n"
+                    << "  Hermit lmstudio-chat create --backend lmstudio --llm.api-options <json> [options]\n"
+                    << "  Hermit decisions create --backend lmstudio --llm.api-options <json> [options]\n"
+                    << "  Hermit messages create --backend lmstudio --llm.api-options <json> [options]\n"
+                    << "  Hermit systemone create --backend lmstudio --llm.api-options <json> [options]\n"
+                    << "  Hermit batch-chat create --backend vllm --llm.api-options <json> [options]\n"
+                    << "  Hermit backend-api request --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama> --llm.api-path <path> [options]\n"
                     << "  Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata|system-stats|default-workflow|users|user-create|userdata-list|userdata-list-v2|userdata-get|userdata-put|userdata-delete|userdata-move|jobs|job|job-cancel|jobs-cancel> [options]\n"
-                    << "  Hermit sd-api <progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|memory|scripts|script-info|extensions|refresh-embeddings|refresh-checkpoints|refresh-vae|unload-checkpoint|reload-checkpoint> [options]\n"
+                    << "  Hermit sd-api <request|routes|pending-tasks|internal-progress|quicksettings-hint|ping|profile-startup|sysinfo|sysinfo-download|progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|memory|scripts|script-info|extensions|refresh-embeddings|refresh-checkpoints|refresh-vae|unload-checkpoint|reload-checkpoint|server-kill|server-restart|server-stop> [options]\n"
                     << "  Hermit models <create|copy|delete|pull|push> --backend ollama --llm.model-action-options <json> [options]\n"
                     << "  Hermit embeddings create --backend <lmstudio|llama-cpp|vllm|ollama> --llm.model <model> [options]\n"
                     << "  Hermit tokenize encode --backend llama-cpp [options]\n"
@@ -700,11 +720,173 @@ namespace Hermit
                     cfg.llm.model_action = action;
                     cfg.command_mode = command_mode::manage_ollama_model;
                 }
+                else if (cfg.llm.backend_name == "lmstudio" && (action == "load" || action == "unload"
+                    || action == "download" || action == "download-status"))
+                {
+                    if (cfg.llm.model_action_options.empty())
+                    {
+                        boost::nowide::cerr << "models " << action << " には --llm.model-action-options が必要です。\n";
+                        return parse_result::program_options_error;
+                    }
+                    cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
+                    cfg.llm.model_action = action;
+                    cfg.command_mode = command_mode::manage_lmstudio_model;
+                }
                 else
                 {
                     boost::nowide::cerr << "models " << action << " はこの backend に対応していません: " << cfg.llm.backend_name << '\n';
                     return parse_result::program_options_error;
                 }
+            }
+            else if (command == "lmstudio-chat" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "create" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "lmstudio")
+                {
+                    boost::nowide::cerr << "lmstudio-chat create は --backend lmstudio が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "lmstudio-chat create には --llm.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "lmstudio";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
+                cfg.command_mode = command_mode::create_lmstudio_chat;
+            }
+            else if (command == "responses" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "create" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "lmstudio")
+                {
+                    boost::nowide::cerr << "responses create は --backend lmstudio が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "responses create には --llm.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "lmstudio";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
+                cfg.command_mode = command_mode::create_lmstudio_response;
+            }
+            else if (command == "decisions" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "create" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "lmstudio")
+                {
+                    boost::nowide::cerr << "decisions create は --backend lmstudio が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "decisions create には --llm.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "lmstudio";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
+                cfg.command_mode = command_mode::create_lmstudio_decision;
+            }
+            else if (command == "messages" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "create" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "lmstudio")
+                {
+                    boost::nowide::cerr << "messages create は --backend lmstudio が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "messages create には --llm.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "lmstudio";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
+                cfg.command_mode = command_mode::create_lmstudio_messages;
+            }
+            else if (command == "systemone" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "create" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "lmstudio")
+                {
+                    boost::nowide::cerr << "systemone create は --backend lmstudio が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "systemone create には --llm.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "lmstudio";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
+                cfg.command_mode = command_mode::create_lmstudio_systemone;
+            }
+            else if (command == "batch-chat" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "create" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "vllm")
+                {
+                    boost::nowide::cerr << "batch-chat create は --backend vllm が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "batch-chat create には --llm.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "vllm";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "8000" : cfg.llm.port;
+                cfg.command_mode = command_mode::create_vllm_batch_chat;
+            }
+            else if (command == "backend-api" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (backend_option != vm.end()) cfg.llm.backend_name = backend_option->second.as<std::string>();
+                if (action != "request" || (cfg.llm.backend_name != "tg" && cfg.llm.backend_name != "kc"
+                    && cfg.llm.backend_name != "lmstudio" && cfg.llm.backend_name != "llama-cpp"
+                    && cfg.llm.backend_name != "vllm" && cfg.llm.backend_name != "ollama"))
+                {
+                    boost::nowide::cerr << "backend-api request は tg/kc/lmstudio/llama-cpp/vllm/ollama に対応します。\n";
+                    return parse_result::program_options_error;
+                }
+                const std::string& method{ cfg.llm.api_method };
+                if (method != "GET" && method != "POST" && method != "PUT" && method != "PATCH"
+                    && method != "DELETE" && method != "HEAD" && method != "OPTIONS")
+                {
+                    boost::nowide::cerr << "backend-api request の --llm.api-method は GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS のいずれかです。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_path.empty() || cfg.llm.api_path.front() != '/')
+                {
+                    boost::nowide::cerr << "backend-api request には '/' から始まる --llm.api-path が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (!cfg.llm.api_options.empty() && !cfg.llm.api_body_file.empty())
+                {
+                    boost::nowide::cerr << "--llm.api-options と --llm.api-body-file は併用できません。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.backend_name == "lmstudio") cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
+                else if (cfg.llm.backend_name == "llama-cpp") cfg.llm.port = vm.at("llm.port").defaulted() ? "8080" : cfg.llm.port;
+                else if (cfg.llm.backend_name == "vllm") cfg.llm.port = vm.at("llm.port").defaulted() ? "8000" : cfg.llm.port;
+                else if (cfg.llm.backend_name == "ollama") cfg.llm.port = vm.at("llm.port").defaulted() ? "11434" : cfg.llm.port;
+                else if (cfg.llm.backend_name == "kc") cfg.llm.port = vm.at("llm.port").defaulted() ? "5001" : cfg.llm.port;
+                cfg.command_mode = command_mode::request_llm_api;
             }
             else if (command == "comfy" && action_iterator != vm.end())
             {
@@ -793,7 +975,9 @@ namespace Hermit
             else if (command == "sd-api" && action_iterator != vm.end())
             {
                 const std::string action{ action_iterator->second.as<std::string>() };
-                if (action != "progress" && action != "interrogate" && action != "interrupt" && action != "skip"
+                if (action != "progress" && action != "routes" && action != "pending-tasks" && action != "internal-progress"
+                    && action != "quicksettings-hint" && action != "ping" && action != "profile-startup" && action != "sysinfo" && action != "sysinfo-download"
+                    && action != "request" && action != "interrogate" && action != "interrupt" && action != "skip"
                     && action != "extra-single-image" && action != "extra-batch-images" && action != "png-info"
                     && action != "options" && action != "options-set" && action != "cmd-flags" && action != "samplers"
                     && action != "create-embedding" && action != "create-hypernetwork" && action != "train-embedding" && action != "train-hypernetwork"
@@ -802,9 +986,41 @@ namespace Hermit
                     && action != "sd-models" && action != "sd-vae" && action != "hypernetworks"
                     && action != "face-restorers" && action != "realesrgan-models" && action != "prompt-styles" && action != "embeddings"
                     && action != "refresh-embeddings" && action != "refresh-checkpoints" && action != "refresh-vae"
-                    && action != "unload-checkpoint" && action != "reload-checkpoint")
+                    && action != "unload-checkpoint" && action != "reload-checkpoint"
+                    && action != "server-kill" && action != "server-restart" && action != "server-stop")
                 {
                     boost::nowide::cerr << "未対応の Stable Diffusion API 操作です: " << action << '\n';
+                    return parse_result::program_options_error;
+                }
+                if (action == "request")
+                {
+                    const std::string& method{ cfg.sd.api_method };
+                    if (method != "GET" && method != "POST" && method != "PUT" && method != "PATCH" && method != "DELETE" && method != "HEAD" && method != "OPTIONS")
+                    {
+                        boost::nowide::cerr << "sd-api request の --sd.api-method は GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS のいずれかです。\n";
+                        return parse_result::program_options_error;
+                    }
+                    if (cfg.sd.api_path.empty() || cfg.sd.api_path.front() != '/')
+                    {
+                        boost::nowide::cerr << "sd-api request には '/' から始まる --sd.api-path が必要です。\n";
+                        return parse_result::program_options_error;
+                    }
+                    if (!cfg.sd.api_body_file.empty() && !cfg.sd.api_options.empty())
+                    {
+                        boost::nowide::cerr << "sd-api request では --sd.api-body-file と --sd.api-options を併用できません。\n";
+                        return parse_result::program_options_error;
+                    }
+                    cfg.command_mode = command_mode::request_sd_api;
+                    return parse_result::success;
+                }
+                if (!cfg.sd.api_body_file.empty() || !cfg.sd.api_content_type.empty() || !cfg.sd.api_headers.empty())
+                {
+                    boost::nowide::cerr << "--sd.api-body-file、--sd.api-content-type、--sd.api-headers は sd-api request 専用です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (action == "internal-progress" && cfg.sd.api_options.empty())
+                {
+                    boost::nowide::cerr << "sd-api internal-progress には --sd.api-options が必要です。\n";
                     return parse_result::program_options_error;
                 }
                 if ((action == "interrogate" || action == "extra-single-image" || action == "extra-batch-images"
@@ -815,13 +1031,16 @@ namespace Hermit
                     boost::nowide::cerr << "sd-api " << action << " には --sd.api-options が必要です。\n";
                     return parse_result::program_options_error;
                 }
-                if ((action == "interrupt" || action == "skip" || action == "cmd-flags" || action == "samplers"
+                if ((action == "interrupt" || action == "skip" || action == "routes" || action == "pending-tasks"
+                    || action == "quicksettings-hint" || action == "ping" || action == "profile-startup" || action == "sysinfo" || action == "sysinfo-download"
+                    || action == "cmd-flags" || action == "samplers"
                     || action == "schedulers" || action == "upscalers" || action == "latent-upscale-modes"
                     || action == "sd-models" || action == "sd-vae" || action == "hypernetworks"
                     || action == "face-restorers" || action == "realesrgan-models" || action == "prompt-styles" || action == "embeddings"
                     || action == "memory" || action == "scripts" || action == "script-info" || action == "extensions"
                     || action == "refresh-embeddings" || action == "refresh-checkpoints" || action == "refresh-vae"
-                    || action == "unload-checkpoint" || action == "reload-checkpoint")
+                    || action == "unload-checkpoint" || action == "reload-checkpoint"
+                    || action == "server-kill" || action == "server-restart" || action == "server-stop")
                     && !cfg.sd.api_options.empty())
                 {
                     boost::nowide::cerr << "sd-api " << action << " は --sd.api-options を受け取りません。\n";

@@ -8,7 +8,8 @@ Hermit は、Windows 上で動作する C++20 の CLI アプリケーション�
 
 - `tg` / `kc`、OpenAI 互換 API を持つ `lmstudio` / `llama-cpp` / `vllm`、Ollama 独自 API の `ollama` でテキストを生成し、Completions または Chat Completions の処理を選択できます。
 - `sd` モードで Stable Diffusion WebUI に txt2img / img2img リクエストを送り、画像を保存できます。
-- `sd-api` コマンドで Stable Diffusion WebUI の進捗、画像 interrogate、中断、skip API を呼び出せます。
+- `sd-api` コマンドで Stable Diffusion WebUI の progress、interrogate、Extras、options、モデル一覧・更新、embedding/hypernetwork 作成・学習、memory/script/extension 情報、checkpoint 管理、任意 server control API と runtime OpenAPI route inventory を呼び出せます。`sd-api request` は method/path、JSON または file body、Content-Type、追加 header を指定できます。
+- `backend-api request` で `tg`、`kc`、`lmstudio`、`llama-cpp`、`vllm`、`ollama` の HTTP route を直接呼び出せます。method/path と JSON/raw body を指定し、応答 JSON または binary bytes を出力できます。
 - `sb` モードで Style-Bert-VITS2 に音声生成リクエストを送り、音声を保存できます。
 - `cu` モードで ComfyUI の workflow を送信し、画像をアップロードして生成結果を保存できます。
 - `{{...}}` 形式の式をプロンプトや対応するファイルパスで評価できます。ファイル読み込み、テキスト切り詰め、日時、乱数、環境変数、サブプロンプトなどの組み込み機能を利用できます。
@@ -67,7 +68,56 @@ Hermit.exe generate --backend tg --llm.host localhost --llm.port 5000 --llm.prom
 | `extract-png-parameters` | PNG から生成パラメーターを抽出 |
 | `create-process` / `terminate-process` | サーバープロセスの起動・終了 |
 
-コマンドは `generate --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama|sd|sb|cu>`、`models list --backend <lmstudio|llama-cpp|vllm|ollama>`、`embeddings create --backend <lmstudio|llama-cpp|vllm|ollama>`、`tokenize <encode|decode> --backend llama-cpp`、`server <start|stop>`、`png extract` のいずれかです。設定オプションは `--namespace.property` 形式で、INI でも同じ dotted key を使います。短縮形は `-h` のみです。旧 `--mode` とハイフン連結のフラットなオプション名は受け付けません。詳しくは [CLI オプション一覧](docs/SPECIFICATION.md#実装済みコマンドラインオプション一覧) を参照してください。
+コマンドには `generate`、`backend-api request`、`models`、`responses`、`decisions`、`embeddings`、`tokenize`、`server`、`png` などがあります。設定オプションは `--namespace.property` 形式で、INI でも同じ dotted key を使います。短縮形は `-h` のみです。旧 `--mode` とハイフン連結のフラットなオプション名は受け付けません。詳しくは [CLI オプション一覧](docs/SPECIFICATION.md#実装済みコマンドラインオプション一覧) を参照してください。
+
+LM Studio Responses API は専用コマンドで呼び出せます。`--llm.api-options` に `model` と `input` を含む request JSON を渡します。通常は応答 JSON object を受け取り、`stream:true` の場合は受信した SSE bytes を標準出力へ逐次出力します。
+
+```powershell
+Hermit.exe responses create --backend lmstudio --llm.api-options '{"model":"openai/gpt-oss-20b","input":"Hello"}'
+```
+
+streaming の場合は次のように `stream:true` を指定します。
+
+```powershell
+Hermit.exe responses create --backend lmstudio --llm.api-options '{"model":"openai/gpt-oss-20b","input":"Hello","stream":true}'
+```
+
+SSE bytes を加工せず標準出力へ逐次書き込みます。tool 実行および response lifecycle は [バックエンド API 対応台帳](docs/BACKEND_WEB_API_COVERAGE.md) に記載の通り未対応です。
+
+LM Studio の native stateful chat API は `lmstudio-chat create` で呼び出せます。追加の generation、MCP integration、stateful follow-up 等の公式 field を `--llm.api-options` で指定できます。`stream:true` は native named SSE events をそのまま標準出力へ逐次出力します。
+
+```powershell
+Hermit.exe lmstudio-chat create --backend lmstudio --llm.api-options '{"model":"ibm/granite-4-micro","input":"Hello"}'
+Hermit.exe lmstudio-chat create --backend lmstudio --llm.api-options '{"model":"ibm/granite-4-micro","input":"Hello","stream":true}'
+Hermit.exe lmstudio-chat create --backend lmstudio --llm.api-options '{"model":"ibm/granite-4-micro","input":"Continue","previous_response_id":"resp_..."}'
+```
+
+Anthropic Messages 互換 API は `messages create` で利用できます。API key を設定すると `x-api-key` header で送信します。`stream:true` の場合は Anthropic SSE event をそのまま逐次出力します。
+
+```powershell
+Hermit.exe messages create --backend lmstudio --llm.api-options '{"model":"ibm/granite-4-micro","max_tokens":128,"messages":[{"role":"user","content":"Hello"}]}'
+Hermit.exe messages create --backend lmstudio --llm.api-options '{"model":"ibm/granite-4-micro","max_tokens":128,"messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+Jev (TypeSafe AI) System One endpoint は decision model ID と `state`、ID付き `questions` を JSON で指定します。
+
+vLLM の batch chat endpoint は複数 conversation を一度に送信します。streaming、tools は対象外です。
+
+```powershell
+Hermit.exe batch-chat create --backend vllm --llm.api-options '{"model":"Qwen/Qwen2.5-1.5B-Instruct","messages":[[{"role":"user","content":"Capital of France?"}],[{"role":"user","content":"Capital of Japan?"}]]}'
+```
+
+```powershell
+Hermit.exe systemone create --backend lmstudio --llm.api-options '{"model":"decision-model","state":"I was charged twice.","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}'
+```
+
+未対応の HTTP API route は `backend-api request` で呼び出せます。例えば LM Studio Responses API は次のように実行します。
+
+```powershell
+Hermit.exe backend-api request --backend lmstudio --llm.api-method POST --llm.api-path /v1/responses --llm.api-options '{"model":"openai/gpt-oss-20b","input":"Hello"}'
+```
+
+`--llm.api-body-file` で raw/multipart body、`--llm.api-content-type` で Content-Type、`--llm.api-headers` で追加 header を指定できます。JSON/object API 応答はそのまま出力し、binary 応答は bytes を標準出力へ書きます。この共通経路は個別 API の schema 検証や streaming/WebSocket 処理を代替しません。operation inventory は [バックエンド API 対応台帳](docs/BACKEND_WEB_API_COVERAGE.md) を参照してください。
 
 HTTP API から受け取る応答 body は 128 MiB を上限とし、上限を超える応答は受信エラーになります。
 
@@ -173,6 +223,17 @@ Hermit.exe models version --backend ollama
 
 Ollama model lifecycle 操作は request body を JSON object で指定します。応答はサーバーの JSON/NDJSON をそのまま出力します。create、pull、push の進捗配信は `stream` field で制御できます。
 
+LM Studio native REST のモデル load/unload/download と download job status は `models` command から呼び出せます。`--llm.model-action-options` に公式 API の JSON fields を渡します。例:
+
+```powershell
+Hermit.exe models load --backend lmstudio --llm.model-action-options '{"model":"openai/gpt-oss-20b","context_length":16384,"flash_attention":true}'
+Hermit.exe models unload --backend lmstudio --llm.model-action-options '{"instance_id":"instance-id"}'
+Hermit.exe models download --backend lmstudio --llm.model-action-options '{"model":"openai/gpt-oss-20b","quantization":"Q4_K_M"}'
+Hermit.exe models download-status --backend lmstudio --llm.model-action-options '{"job_id":"job-id"}'
+```
+
+各操作の schema とバージョン差は [バックエンド API 対応台帳](docs/BACKEND_WEB_API_COVERAGE.md) を参照してください。
+
 ```powershell
 Hermit.exe models pull --backend ollama --llm.model-action-options '{"model":"llama3.2","stream":false}'
 Hermit.exe models copy --backend ollama --llm.model-action-options '{"source":"llama3.2","destination":"llama3.2-backup"}'
@@ -190,10 +251,24 @@ Hermit.exe tokenize decode --backend llama-cpp --llm.token-ids 123 456
 
 ### AUTOMATIC1111 Stable Diffusion WebUI (`sd`)
 
-生成のほかに、progress・interrogate・interrupt・skip・Extras upscaling・PNG 情報・options API・model/sampler/extension 一覧・refresh API・embedding/hypernetwork の作成と学習 API・memory/script 情報・checkpoint の unload/reload API を呼び出せます。画像データは Base64 で `--sd.api-options` の JSON object に渡します。`interrogate` の model は `clip` または `deepdanbooru` です。`options` は設定を取得し、`options-set` は JSON object で設定を更新します。`create-embedding`、`create-hypernetwork`、`train-embedding`、`train-hypernetwork` は非空 JSON object をそのまま各 API へ転送します。request field は WebUI の版や設定で変わるため、使用中サーバーに対応する値を指定してください。`cmd-flags`、`samplers`、`schedulers`、`upscalers`、`latent-upscale-modes`、`sd-models`、`sd-vae`、`hypernetworks`、`face-restorers`、`realesrgan-models`、`prompt-styles`、`embeddings` はサーバーが提供する一覧 JSON を出力します。`refresh-embeddings`、`refresh-checkpoints`、`refresh-vae` は各モデル一覧を再読込します。`memory` は RAM/VRAM 使用量を、`scripts` と `script-info` は script 名と API metadata を、`extensions` は extension metadata を返します。`unload-checkpoint` は現在の model weights を解放し、`reload-checkpoint` は現在の model を device へ戻します。
+`--sd.generation-options` は txt2img/img2img request に任意の JSON object fields を追加します。使用中の WebUI に固有の field、script/extension fields を指定でき、同じキーが既存設定にもある場合は JSON object 側が優先されます。
+
+```powershell
+Hermit.exe generate --backend sd --sd.generation-options '{"hr_prompt":"high detail","custom_extension_field":{"enabled":true}}'
+```
+
+生成のほかに、progress・interrogate・interrupt・skip・Extras upscaling・PNG 情報・options API・model/sampler/extension 一覧・refresh API・embedding/hypernetwork の作成と学習 API・memory/script 情報・checkpoint の unload/reload API を呼び出せます。画像データは Base64 で `--sd.api-options` の JSON object に渡します。`interrogate` の model は `clip` または `deepdanbooru` です。`options` は設定を取得し、`options-set` は JSON object で設定を更新します。`create-embedding`、`create-hypernetwork`、`train-embedding`、`train-hypernetwork` は非空 JSON object をそのまま各 API へ転送します。request field は WebUI の版や設定で変わるため、使用中サーバーに対応する値を指定してください。`cmd-flags`、`samplers`、`schedulers`、`upscalers`、`latent-upscale-modes`、`sd-models`、`sd-vae`、`hypernetworks`、`face-restorers`、`realesrgan-models`、`prompt-styles`、`embeddings` はサーバーが提供する一覧 JSON を出力します。`refresh-embeddings`、`refresh-checkpoints`、`refresh-vae` は各モデル一覧を再読込します。`memory` は RAM/VRAM 使用量を、`scripts` と `script-info` は script 名と API metadata を、`extensions` は extension metadata を返します。`unload-checkpoint` は現在の model weights を解放し、`reload-checkpoint` は現在の model を device へ戻します。`pending-tasks`、`internal-progress`、`quicksettings-hint`、`ping`、`profile-startup`、`sysinfo`、`sysinfo-download` は A1111 UI 内部 API を呼び出します。`routes` は `/openapi.json` を取得し、稼働中 WebUI と拡張機能が登録した OpenAPI routes を確認できます。汎用 `request` は method/path と任意 body、Content-Type、header を指定します。JSON body は `--sd.api-options`、binary/raw body（multipart を含む）は `--sd.api-body-file` で渡し、後者では `--sd.api-content-type` を指定してください。追加 header は `--sd.api-headers` に JSON string map で渡せます。Content-Length、Transfer-Encoding、Host、Connection、Content-Type header は個別 option と矛盾するため header map では指定できません。Content-Type が text または JSON/XML の応答はテキストとして表示し、その他の型は bytes を標準出力へ書きます。streaming と WebSocket は未対応です。`server-kill`、`server-restart`、`server-stop` は A1111 の起動時に `--api-server-stop` が指定されている場合に使えるサーバー制御 API です。
 
 ```powershell
 Hermit.exe sd-api progress --sd.api-options '{"skip_current_image":true}'
+Hermit.exe sd-api routes
+Hermit.exe sd-api request --sd.api-method GET --sd.api-path /internal/ping
+Hermit.exe sd-api request --sd.api-method POST --sd.api-path /extension/custom --sd.api-options '{"value":1}'
+Hermit.exe sd-api request --sd.api-method POST --sd.api-path /upload/image --sd.api-body-file upload.multipart --sd.api-content-type "multipart/form-data; boundary=hermit-boundary" --sd.api-headers '{"Authorization":"Bearer <token>"}'
+Hermit.exe sd-api pending-tasks
+Hermit.exe sd-api internal-progress --sd.api-options '{"id_task":"task-id","live_preview":false}'
+Hermit.exe sd-api quicksettings-hint
+Hermit.exe sd-api sysinfo-download > sysinfo.json
 Hermit.exe sd-api interrogate --sd.api-options '{"image":"<base64>","model":"clip"}'
 Hermit.exe sd-api interrupt
 Hermit.exe sd-api skip
@@ -218,6 +293,9 @@ Hermit.exe sd-api script-info
 Hermit.exe sd-api extensions
 Hermit.exe sd-api unload-checkpoint
 Hermit.exe sd-api reload-checkpoint
+Hermit.exe sd-api server-kill
+Hermit.exe sd-api server-restart
+Hermit.exe sd-api server-stop
 ```
 
 API 操作は [バックエンド API 対応表](docs/BACKEND_WEB_API_COVERAGE.md) に記録しています。

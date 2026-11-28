@@ -21,6 +21,23 @@ namespace Hermit
         std::string get_ollama_version(const config& cfg, const public_api::http_executor& executor);
         std::string show_model(const config& cfg, const public_api::http_executor& executor);
         std::string manage_ollama_model(const config& cfg, const public_api::http_executor& executor);
+        std::string manage_lmstudio_model(const config& cfg, const public_api::http_executor& executor);
+        std::string create_lmstudio_chat(const config& cfg, const public_api::http_executor& executor);
+        std::string create_lmstudio_chat(const config& cfg, const public_api::http_executor& executor,
+            const public_api::http_stream_executor& stream_executor, const public_api::http_stream_handler& handler);
+        std::string create_lmstudio_response(const config&, const public_api::http_executor&);
+        std::string create_lmstudio_response(const config&, const public_api::http_executor&,
+            const public_api::http_stream_executor&, const public_api::http_stream_handler&);
+        public_api::http_stream_response_data create_lmstudio_response_stream(const config&,
+            const public_api::http_stream_executor&, const public_api::http_stream_handler&);
+        std::string create_lmstudio_decision(const config&, const public_api::http_executor&);
+        std::string create_lmstudio_messages(const config&, const public_api::http_executor&);
+        std::string create_lmstudio_messages(const config&, const public_api::http_executor&,
+            const public_api::http_stream_executor&, const public_api::http_stream_handler&);
+        std::string create_lmstudio_systemone(const config&, const public_api::http_executor&);
+        std::string create_vllm_batch_chat(const config&, const public_api::http_executor&);
+        public_api::http_response_data make_api_request(const config&, const public_api::http_executor&);
+        public_api::http_response_data make_api_request(const config&, const public_api::http_executor&, const filesystem::file_reader&);
         std::string create_embeddings(const config& cfg, const public_api::http_executor& executor);
         std::string tokenize(const config& cfg, const public_api::http_executor& executor);
         std::string detokenize(const config& cfg, const public_api::http_executor& executor);

@@ -38,6 +38,38 @@ TEST(sd, builds_txt2img_request_with_optional_scripts)
     EXPECT_EQ(request.at("script_name"), "abg remover");
 }
 
+TEST(sd, forwards_additional_dynamic_generation_fields)
+{
+    Hermit::config cfg;
+    cfg.sd.mode = Hermit::sd_mode::txt2img;
+    cfg.sd.common.steps = 30;
+    cfg.sd.generation_options = R"({"steps":47,"hr_prompt":"hires prompt","custom_extension_field":{"enabled":true}})";
+    nlohmann::json txt2img_request;
+    try { txt2img_request = Hermit::sd::make_request(cfg, "prompt", "negative"); }
+    catch (const std::exception& error) { FAIL() << error.what(); }
+    EXPECT_EQ(txt2img_request.at("steps"), 47);
+    EXPECT_EQ(txt2img_request.at("hr_prompt"), "hires prompt");
+    EXPECT_EQ(txt2img_request.at("custom_extension_field").at("enabled"), true);
+
+    cfg.sd.mode = Hermit::sd_mode::img2img;
+    cfg.sd.img2img.init_images = { "init.png" };
+    cfg.sd.generation_options = R"({"image_cfg_scale":1.75,"custom_img2img_field":"value"})";
+    const Hermit::filesystem::file_reader reader{ [](const std::filesystem::path&, std::ios_base::openmode)
+    {
+        return std::string{ "image" };
+    } };
+    const nlohmann::json img2img_request{ Hermit::sd::make_request(cfg, "prompt", "negative", reader) };
+    EXPECT_EQ(img2img_request.at("image_cfg_scale"), 1.75);
+    EXPECT_EQ(img2img_request.at("custom_img2img_field"), "value");
+}
+
+TEST(sd, rejects_non_object_generation_options)
+{
+    Hermit::config cfg;
+    cfg.sd.generation_options = "[]";
+    EXPECT_THROW(Hermit::sd::make_request(cfg, "prompt", "negative"), std::invalid_argument);
+}
+
 TEST(sd, injects_request_executor)
 {
     Hermit::config cfg;
@@ -124,6 +156,9 @@ TEST(sd, manages_progress_interrogate_and_control_api_contracts)
         { "extensions", "", Hermit::public_api::http_method::get, "/sdapi/v1/extensions", "" },
         { "unload-checkpoint", "", Hermit::public_api::http_method::post, "/sdapi/v1/unload-checkpoint", "" },
         { "reload-checkpoint", "", Hermit::public_api::http_method::post, "/sdapi/v1/reload-checkpoint", "" },
+        { "server-kill", "", Hermit::public_api::http_method::post, "/sdapi/v1/server-kill", "" },
+        { "server-restart", "", Hermit::public_api::http_method::post, "/sdapi/v1/server-restart", "" },
+        { "server-stop", "", Hermit::public_api::http_method::post, "/sdapi/v1/server-stop", "" },
         { "cmd-flags", "", Hermit::public_api::http_method::get, "/sdapi/v1/cmd-flags", "" },
         { "samplers", "", Hermit::public_api::http_method::get, "/sdapi/v1/samplers", "" },
         { "schedulers", "", Hermit::public_api::http_method::get, "/sdapi/v1/schedulers", "" },
@@ -200,11 +235,132 @@ TEST(sd, rejects_invalid_api_action_options_and_http_status)
     EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
     cfg.sd.api_action = "unload-checkpoint";
     EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+    cfg.sd.api_action = "server-stop";
+    EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
     cfg.sd.api_action = "train-embedding";
     cfg.sd.api_options = "{}";
     EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
     cfg.sd.api_options = "[]";
     EXPECT_THROW(Hermit::sd::manage_api(cfg, success_executor), std::invalid_argument);
+}
+
+TEST(sd, invokes_runtime_discovered_routes_and_generic_methods)
+{
+    Hermit::config cfg;
+    cfg.sd.host = "sd-host";
+    cfg.sd.port = "7860";
+    const std::vector<std::tuple<std::string, Hermit::public_api::http_method, std::string, std::string>> routes
+    {
+        { "routes", Hermit::public_api::http_method::get, "/openapi.json", "" },
+        { "pending-tasks", Hermit::public_api::http_method::get, "/internal/pending-tasks", "" },
+        { "quicksettings-hint", Hermit::public_api::http_method::get, "/internal/quicksettings-hint", "" },
+        { "ping", Hermit::public_api::http_method::get, "/internal/ping", "" },
+        { "profile-startup", Hermit::public_api::http_method::get, "/internal/profile-startup", "" },
+        { "sysinfo", Hermit::public_api::http_method::get, "/internal/sysinfo", "" },
+        { "sysinfo-download", Hermit::public_api::http_method::get, "/internal/sysinfo-download", "" },
+        { "internal-progress", Hermit::public_api::http_method::post, "/internal/progress", R"({"id_task":"task-1"})" }
+    };
+    for (const auto& [action, method, target, body] : routes)
+    {
+        cfg.sd.api_action = action;
+        cfg.sd.api_options = action == "internal-progress" ? R"({"id_task":"task-1"})" : "";
+        const Hermit::public_api::http_executor executor{ [&](const Hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, method);
+            EXPECT_EQ(request.target, target);
+            EXPECT_EQ(request.body, body);
+            return Hermit::public_api::http_response_data{ 200, "{}" };
+        } };
+        EXPECT_EQ(Hermit::sd::manage_api(cfg, executor), "{}") << action;
+    }
+
+    for (const auto& [method_name, method] : std::vector<std::pair<std::string, Hermit::public_api::http_method>>
+        {{"GET", Hermit::public_api::http_method::get}, {"POST", Hermit::public_api::http_method::post},
+        {"PUT", Hermit::public_api::http_method::put}, {"PATCH", Hermit::public_api::http_method::patch},
+        {"DELETE", Hermit::public_api::http_method::delete_}, {"HEAD", Hermit::public_api::http_method::head},
+        {"OPTIONS", Hermit::public_api::http_method::options}})
+    {
+        cfg.sd.api_method = method_name;
+        cfg.sd.api_path = "/extension/custom";
+        cfg.sd.api_options = R"({"value":1})";
+        const Hermit::public_api::http_executor executor{ [&](const Hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, method);
+            EXPECT_EQ(request.target, "/extension/custom");
+            EXPECT_EQ(request.body, R"({"value":1})");
+            return Hermit::public_api::http_response_data{ 200, "ok" };
+        } };
+        EXPECT_EQ(Hermit::sd::make_api_request(cfg, executor).body, "ok");
+    }
+
+    for (const std::string bad_path : {"", "relative", "/../private", "/api/./private", "/api\\evil",
+        "/api#fragment", "/api\nheader", "/%2e%2e/private", "/api/%2E%2E/private", "/%2f%2fevil"})
+    {
+        cfg.sd.api_path = bad_path;
+        EXPECT_THROW(Hermit::sd::make_api_request(cfg, [](const Hermit::public_api::http_request_data&)
+        {
+            return Hermit::public_api::http_response_data{ 200, "" };
+        }), std::invalid_argument);
+    }
+}
+
+TEST(sd, supports_binary_api_request_body_headers_and_response)
+{
+    Hermit::config cfg;
+    cfg.sd.host = "sd-host";
+    cfg.sd.port = "7860";
+    cfg.sd.api_method = "POST";
+    cfg.sd.api_path = "/upload/image";
+    cfg.sd.api_body_file = "request.bin";
+    cfg.sd.api_content_type = "multipart/form-data; boundary=hermit-test";
+    cfg.sd.api_headers = R"({"Authorization":"Bearer test-token","X-Trace":"trace-1"})";
+    const std::string binary_body{ "\0\x01payload\0", 10 };
+    std::filesystem::path read_path;
+    const Hermit::filesystem::file_reader reader{ [&](const std::filesystem::path& path, std::ios_base::openmode mode)
+    {
+        read_path = path;
+        EXPECT_EQ(mode, std::ios::binary);
+        return binary_body;
+    } };
+    const Hermit::public_api::http_executor executor{ [&](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/upload/image");
+        EXPECT_EQ(request.body, binary_body);
+        EXPECT_EQ(request.content_type, "multipart/form-data; boundary=hermit-test");
+        EXPECT_EQ(request.headers.at("Authorization"), "Bearer test-token");
+        EXPECT_EQ(request.headers.at("X-Trace"), "trace-1");
+        return Hermit::public_api::http_response_data{ 200, std::string{ "\0\x01\x02", 3 }, "image/png", true };
+    } };
+    const Hermit::public_api::http_response_data response{ Hermit::sd::make_api_request(cfg, executor, reader) };
+    EXPECT_EQ(read_path.filename(), "request.bin");
+    EXPECT_EQ(response.body, std::string("\0\x01\x02", 3));
+    EXPECT_TRUE(response.is_binary);
+}
+
+TEST(sd, rejects_invalid_generic_api_request_metadata_without_sending)
+{
+    Hermit::config cfg;
+    cfg.sd.api_method = "POST";
+    cfg.sd.api_path = "/extension/custom";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid request must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, "" };
+    } };
+    cfg.sd.api_body_file = "body.bin";
+    cfg.sd.api_options = "{}";
+    EXPECT_THROW(Hermit::sd::make_api_request(cfg, executor, {}), std::invalid_argument);
+    cfg.sd.api_body_file.clear();
+    cfg.sd.api_headers = R"({"Content-Length":"100"})";
+    EXPECT_THROW(Hermit::sd::make_api_request(cfg, executor), std::invalid_argument);
+    cfg.sd.api_headers = R"({"X-Test":"bad\r\nvalue"})";
+    EXPECT_THROW(Hermit::sd::make_api_request(cfg, executor), std::invalid_argument);
+    cfg.sd.api_headers.clear();
+    cfg.sd.api_content_type = "multipart/form-data\r\nX-Evil: true";
+    EXPECT_THROW(Hermit::sd::make_api_request(cfg, executor), std::invalid_argument);
+    cfg.sd.api_content_type = std::string{ "application/json\0X", 18 };
+    EXPECT_THROW(Hermit::sd::make_api_request(cfg, executor), std::invalid_argument);
 }
 
 TEST(sd, builds_img2img_request_with_init_images_and_masks)

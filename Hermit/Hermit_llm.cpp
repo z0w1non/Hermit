@@ -1,4 +1,6 @@
 #include <chrono>
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +14,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/nowide/iostream.hpp>
+#include <boost/url.hpp>
 #include "nlohmann/json.hpp"
 
 #include "Hermit_builtin.hpp"
@@ -159,6 +162,573 @@ namespace Hermit
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
             return response.body;
+        }
+
+        std::string manage_lmstudio_model(const config& cfg, const public_api::http_executor& executor)
+        {
+            nlohmann::json body{ nlohmann::json::parse(cfg.llm.model_action_options) };
+            if (!body.is_object())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "--llm.model-action-options must be a JSON object" });
+            }
+
+            public_api::http_request_data request;
+            if (cfg.llm.model_action == "load" || cfg.llm.model_action == "download")
+            {
+                if (!body.contains("model") || !body.at("model").is_string() || body.at("model").get<std::string>().empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio model load/download options require a non-empty model field" });
+                }
+                request = public_api::make_http_request_data(cfg.llm.host, cfg.llm.port,
+                    cfg.llm.model_action == "load" ? "/api/v1/models/load" : "/api/v1/models/download", body.dump());
+            }
+            else if (cfg.llm.model_action == "unload")
+            {
+                if (!body.contains("instance_id") || !body.at("instance_id").is_string()
+                    || body.at("instance_id").get<std::string>().empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio model unload options require a non-empty instance_id field" });
+                }
+                request = public_api::make_http_request_data(cfg.llm.host, cfg.llm.port,
+                    "/api/v1/models/unload", body.dump());
+            }
+            else if (cfg.llm.model_action == "download-status")
+            {
+                if (!body.contains("job_id") || !body.at("job_id").is_string()
+                    || body.at("job_id").get<std::string>().empty() || body.size() != 1)
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio download-status options require only a non-empty job_id field" });
+                }
+                const std::string job_id{ body.at("job_id").get<std::string>() };
+                if (job_id == "." || job_id == "..")
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio download-status job_id must not be a dot path segment" });
+                }
+                boost::urls::url url{};
+                url.set_path("/");
+                url.segments().push_back("api");
+                url.segments().push_back("v1");
+                url.segments().push_back("models");
+                url.segments().push_back("download");
+                url.segments().push_back("status");
+                url.segments().push_back(job_id);
+                request = public_api::make_http_request_data(cfg.llm.host, cfg.llm.port, url.encoded_path(), {});
+                request.method = public_api::http_method::get;
+            }
+            else
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "unsupported LM Studio model action: " + cfg.llm.model_action });
+            }
+
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            request.options = std::move(options);
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response.body;
+        }
+
+        std::string create_lmstudio_chat(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty() || !body.contains("input")
+                || (!body.at("input").is_string() && !body.at("input").is_array()))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio native chat requires a non-empty model and string or array input" });
+            }
+            if (body.contains("stream") && !body.at("stream").is_boolean())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio native chat stream must be a boolean" });
+            }
+            if (body.value("stream", false))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio native chat streaming requires the streaming executor" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/api/v1/chat", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("model_instance_id")
+                || !response_json.at("model_instance_id").is_string() || !response_json.contains("output")
+                || !response_json.at("output").is_array())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio native chat API returned an invalid response object" });
+            }
+            return response.body;
+        }
+
+        std::string create_lmstudio_chat(const config& cfg, const public_api::http_executor& executor,
+            const public_api::http_stream_executor& stream_executor, const public_api::http_stream_handler& handler)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (body.is_object() && body.contains("stream") && body.at("stream").is_boolean() && body.at("stream").get<bool>())
+            {
+                if (!body.contains("model") || !body.at("model").is_string() || body.at("model").get<std::string>().empty()
+                    || !body.contains("input") || (!body.at("input").is_string() && !body.at("input").is_array()))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio native chat streaming requires model and string or array input" });
+                }
+                if (!stream_executor || !handler) throw std::invalid_argument{ "LM Studio native chat stream executor and handler are required" };
+                public_api::http_transport_options options;
+                options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+                options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+                if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+                public_api::http_request_data request{ public_api::make_http_request_data(
+                    cfg.llm.host, cfg.llm.port, "/api/v1/chat", body.dump(), std::move(options)) };
+                request.content_type = "application/json";
+                const public_api::http_stream_response_data response{ stream_executor(request, handler) };
+                public_api::ensure_success({ response.status_code, {}, response.content_type, false });
+                if (response.content_type.find("text/event-stream") == std::string::npos)
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio native chat streaming API did not return text/event-stream" });
+                }
+                return {};
+            }
+            return create_lmstudio_chat(cfg, executor);
+        }
+
+        std::string create_lmstudio_response(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty() || !body.contains("input")
+                || (!body.at("input").is_string() && !body.at("input").is_array()))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Responses request requires a non-empty model and string or array input" });
+            }
+            if (body.contains("stream") && !body.at("stream").is_boolean())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Responses stream must be a boolean" });
+            }
+            if (body.value("stream", false))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Responses streaming is not supported by this command" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/responses", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("id") || !response_json.at("id").is_string()
+                || !response_json.contains("output") || !response_json.at("output").is_array())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Responses API returned an invalid response object" });
+            }
+            return response.body;
+        }
+
+        public_api::http_stream_response_data create_lmstudio_response_stream(const config& cfg,
+            const public_api::http_stream_executor& executor, const public_api::http_stream_handler& handler)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty() || !body.contains("input")
+                || (!body.at("input").is_string() && !body.at("input").is_array())
+                || !body.contains("stream") || !body.at("stream").is_boolean() || !body.at("stream").get<bool>())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Responses streaming requires model, string or array input, and stream:true" });
+            }
+            if (!executor || !handler) throw std::invalid_argument{ "LM Studio Responses stream executor and handler are required" };
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/responses", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_stream_response_data response{ executor(request, handler) };
+            public_api::ensure_success({ response.status_code, {}, response.content_type, false });
+            if (response.content_type.find("text/event-stream") == std::string::npos)
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Responses streaming API did not return text/event-stream" });
+            }
+            return response;
+        }
+
+        std::string create_lmstudio_response(const config& cfg, const public_api::http_executor& executor,
+            const public_api::http_stream_executor& stream_executor, const public_api::http_stream_handler& handler)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (body.is_object() && body.contains("stream") && body.at("stream").is_boolean() && body.at("stream").get<bool>())
+            {
+                create_lmstudio_response_stream(cfg, stream_executor, handler);
+                return {};
+            }
+            return create_lmstudio_response(cfg, executor);
+        }
+
+        std::string create_lmstudio_decision(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty() || !body.contains("input")
+                || (!body.at("input").is_string() && !body.at("input").is_array())
+                || !body.contains("questions") || !body.at("questions").is_array()
+                || body.at("questions").empty())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Decisions request requires a non-empty model, string or array input, and non-empty questions array" });
+            }
+            const nlohmann::json& questions{ body.at("questions") };
+            if (std::any_of(questions.begin(), questions.end(), [](const nlohmann::json& question)
+                { return !question.is_object() || !question.contains("type") || !question.at("type").is_string()
+                    || !question.contains("instructions") || (!question.at("instructions").is_string() && !question.at("instructions").is_array()); }))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Decisions questions require type and string or array instructions" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/decisions", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("answers") || !response_json.at("answers").is_array())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Decisions API returned an invalid response object" });
+            }
+            return response.body;
+        }
+
+        std::string create_lmstudio_messages(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty() || !body.contains("max_tokens")
+                || !body.at("max_tokens").is_number_integer() || body.at("max_tokens").get<std::int64_t>() <= 0
+                || !body.contains("messages") || !body.at("messages").is_array() || body.at("messages").empty())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Anthropic Messages requires model, positive max_tokens, and a non-empty messages array" });
+            }
+            for (const nlohmann::json& message : body.at("messages"))
+            {
+                if (!message.is_object() || !message.contains("role") || !message.at("role").is_string()
+                    || (message.at("role") != "user" && message.at("role") != "assistant")
+                    || !message.contains("content") || (!message.at("content").is_string() && !message.at("content").is_array()))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio Anthropic Messages entries require user/assistant role and string or array content" });
+                }
+            }
+            if (body.contains("stream") && !body.at("stream").is_boolean())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Anthropic Messages stream must be a boolean" });
+            }
+            if (body.value("stream", false))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Anthropic Messages streaming requires the streaming executor" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/messages", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            if (!cfg.llm.api_key.empty()) request.headers.emplace("x-api-key", cfg.llm.api_key);
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("type") || response_json.at("type") != "message"
+                || !response_json.contains("role") || response_json.at("role") != "assistant"
+                || !response_json.contains("content") || !response_json.at("content").is_array())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio Anthropic Messages API returned an invalid response object" });
+            }
+            return response.body;
+        }
+
+        std::string create_lmstudio_messages(const config& cfg, const public_api::http_executor& executor,
+            const public_api::http_stream_executor& stream_executor, const public_api::http_stream_handler& handler)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (body.is_object() && body.contains("stream") && body.at("stream").is_boolean() && body.at("stream").get<bool>())
+            {
+                if (!body.contains("model") || !body.at("model").is_string() || body.at("model").get<std::string>().empty()
+                    || !body.contains("max_tokens") || !body.at("max_tokens").is_number_integer()
+                    || body.at("max_tokens").get<std::int64_t>() <= 0 || !body.contains("messages")
+                    || !body.at("messages").is_array() || body.at("messages").empty())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio Anthropic Messages streaming requires model, positive max_tokens, and messages" });
+                }
+                if (!stream_executor || !handler) throw std::invalid_argument{ "Anthropic Messages stream executor and handler are required" };
+                public_api::http_transport_options options;
+                options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+                options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+                public_api::http_request_data request{ public_api::make_http_request_data(
+                    cfg.llm.host, cfg.llm.port, "/v1/messages", body.dump(), std::move(options)) };
+                request.content_type = "application/json";
+                if (!cfg.llm.api_key.empty()) request.headers.emplace("x-api-key", cfg.llm.api_key);
+                const public_api::http_stream_response_data response{ stream_executor(request, handler) };
+                public_api::ensure_success({ response.status_code, {}, response.content_type, false });
+                if (response.content_type.find("text/event-stream") == std::string::npos)
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio Anthropic Messages streaming API did not return text/event-stream" });
+                }
+                return {};
+            }
+            return create_lmstudio_messages(cfg, executor);
+        }
+
+        std::string create_lmstudio_systemone(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty() || !body.contains("state")
+                || (!body.at("state").is_string() && !body.at("state").is_object() && !body.at("state").is_array())
+                || !body.contains("questions") || !body.at("questions").is_object() || body.at("questions").empty())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio System One requires model, state, and a non-empty questions object" });
+            }
+            for (const auto& [question_id, question] : body.at("questions").items())
+            {
+                if (question_id.empty() || !question.is_object() || !question.contains("type")
+                    || !question.at("type").is_string()
+                    || (question.at("type") != "noul" && question.at("type") != "choice" && question.at("type") != "score")
+                    || !question.contains("instructions") || !question.at("instructions").is_string())
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio System One questions require IDs, supported type, and string instructions" });
+                }
+                if ((question.at("type") == "choice" && (!question.contains("criteria")
+                        || !question.at("criteria").is_object() || question.at("criteria").empty()))
+                    || (question.at("type") == "score" && (!question.contains("criteria")
+                        || !question.at("criteria").is_array() || question.at("criteria").empty())))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio System One choice/score questions require non-empty criteria" });
+                }
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/systemone", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("answers") || !response_json.at("answers").is_object())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "LM Studio System One API returned an invalid response object" });
+            }
+            for (const auto& [question_id, question] : body.at("questions").items())
+            {
+                if (!response_json.at("answers").contains(question_id))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "LM Studio System One response is missing an answer for question: " + question_id });
+                }
+            }
+            return response.body;
+        }
+
+        std::string create_vllm_batch_chat(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty() || !body.contains("messages")
+                || !body.at("messages").is_array() || body.at("messages").empty())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "vLLM batch chat requires a non-empty model and conversations array" });
+            }
+            for (const nlohmann::json& conversation : body.at("messages"))
+            {
+                if (!conversation.is_array() || conversation.empty()
+                    || std::any_of(conversation.begin(), conversation.end(), [](const nlohmann::json& message)
+                    {
+                        return !message.is_object() || !message.contains("role") || !message.at("role").is_string()
+                            || !message.contains("content") || (!message.at("content").is_string() && !message.at("content").is_array());
+                    }))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "vLLM batch chat conversations must be non-empty arrays of role/content messages" });
+                }
+            }
+            if ((body.contains("stream") && (!body.at("stream").is_boolean() || body.at("stream").get<bool>()))
+                || body.contains("tools") || (body.contains("n") && (!body.at("n").is_number_integer() || body.at("n") != 1)))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "vLLM batch chat does not support streaming/tools and requires n=1" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/chat/completions/batch", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("choices") || !response_json.at("choices").is_array()
+                || response_json.at("choices").size() != body.at("messages").size())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "vLLM batch chat response must contain one choice for each conversation" });
+            }
+            return response.body;
+        }
+
+        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor)
+        {
+            return make_api_request(cfg, executor, [](const std::filesystem::path& path, std::ios_base::openmode mode)
+            {
+                return filesystem::read_file_to_string(path, mode);
+            });
+        }
+
+        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor,
+            const filesystem::file_reader& reader)
+        {
+            using public_api::http_method;
+            http_method method;
+            const std::string& method_name{ cfg.llm.api_method };
+            if (method_name == "GET") method = http_method::get;
+            else if (method_name == "POST") method = http_method::post;
+            else if (method_name == "PUT") method = http_method::put;
+            else if (method_name == "PATCH") method = http_method::patch;
+            else if (method_name == "DELETE") method = http_method::delete_;
+            else if (method_name == "HEAD") method = http_method::head;
+            else if (method_name == "OPTIONS") method = http_method::options;
+            else throw std::invalid_argument{ "backend-api method must be GET, POST, PUT, PATCH, DELETE, HEAD, or OPTIONS" };
+
+            const std::string& path{ cfg.llm.api_path };
+            const std::string_view path_only{ path.substr(0, path.find('?')) };
+            const std::string decoded_path{ boost::urls::pct_string_view{ path_only }.decode() };
+            const bool has_dot_segment{ [&decoded_path]
+            {
+                std::size_t segment_start{};
+                while (segment_start <= decoded_path.size())
+                {
+                    const std::size_t segment_end{ decoded_path.find('/', segment_start) };
+                    const std::string_view segment{ decoded_path.data() + segment_start,
+                        (segment_end == std::string::npos ? decoded_path.size() : segment_end) - segment_start };
+                    if (segment == "." || segment == "..") return true;
+                    if (segment_end == std::string::npos) break;
+                    segment_start = segment_end + 1;
+                }
+                return false;
+            }() };
+            if (path.empty() || path.front() != '/' || path.starts_with("//") || path.find('#') != std::string::npos
+                || path.find('\\') != std::string::npos || decoded_path.starts_with("//") || decoded_path.find('\\') != std::string::npos
+                || has_dot_segment
+                || std::any_of(path.begin(), path.end(), [](unsigned char character) { return character <= 0x20 || character == 0x7f; }))
+            {
+                throw std::invalid_argument{ "backend-api path must be a local absolute path without traversal, fragment, or whitespace" };
+            }
+            if (!cfg.llm.api_options.empty() && !cfg.llm.api_body_file.empty())
+            {
+                throw std::invalid_argument{ "backend-api accepts either --llm.api-options or --llm.api-body-file, not both" };
+            }
+            std::string body;
+            if (!cfg.llm.api_body_file.empty())
+            {
+                const std::filesystem::path body_path{ filesystem::string_to_path_by_config(cfg.llm.api_body_file, cfg) };
+                body = filesystem::read_file_to_string(body_path, std::ios::binary, reader);
+            }
+            else if (!cfg.llm.api_options.empty())
+            {
+                const nlohmann::json json_body{ nlohmann::json::parse(cfg.llm.api_options) };
+                if (!json_body.is_object() && !json_body.is_array())
+                {
+                    throw std::invalid_argument{ "backend-api JSON body must be an object or array" };
+                }
+                body = json_body.dump();
+            }
+            public_api::http_transport_options transport_options;
+            transport_options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            transport_options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) transport_options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, path, std::move(body), std::move(transport_options)) };
+            request.method = method;
+            if (std::any_of(cfg.llm.api_content_type.begin(), cfg.llm.api_content_type.end(), [](unsigned char character)
+                { return character < 0x20 || character == 0x7f; }))
+            {
+                throw std::invalid_argument{ "backend-api Content-Type contains a control character" };
+            }
+            request.content_type = cfg.llm.api_content_type;
+            if (!cfg.llm.api_headers.empty())
+            {
+                const nlohmann::json headers{ nlohmann::json::parse(cfg.llm.api_headers) };
+                if (!headers.is_object()) throw std::invalid_argument{ "backend-api headers must be a JSON object" };
+                const std::string token_characters{ "!#$%&'*+-.^_`|~" };
+                for (const auto& [name, value] : headers.items())
+                {
+                    const bool valid_name{ !name.empty() && std::all_of(name.begin(), name.end(), [&](unsigned char character)
+                    {
+                        return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
+                            || (character >= '0' && character <= '9') || token_characters.find(static_cast<char>(character)) != std::string::npos;
+                    }) };
+                    std::string normalized_name{ name };
+                    std::transform(normalized_name.begin(), normalized_name.end(), normalized_name.begin(), [](unsigned char character)
+                    {
+                        return static_cast<char>(std::tolower(character));
+                    });
+                    if (!valid_name || !value.is_string() || normalized_name == "host" || normalized_name == "content-length"
+                        || normalized_name == "transfer-encoding" || normalized_name == "connection" || normalized_name == "content-type")
+                    {
+                        throw std::invalid_argument{ "backend-api contains a reserved or non-string header" };
+                    }
+                    const std::string header_value{ value.get<std::string>() };
+                    if (std::any_of(header_value.begin(), header_value.end(), [](unsigned char character)
+                            { return (character < 0x20 && character != '\t') || character == 0x7f; }))
+                    {
+                        throw std::invalid_argument{ "backend-api header contains an invalid control character" };
+                    }
+                    request.headers.emplace(name, header_value);
+                }
+            }
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            return response;
         }
 
         std::string create_embeddings(const config& cfg, const public_api::http_executor& executor)

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <string_view>
 #include <optional>
 #include <string_view>
 
@@ -21,6 +22,10 @@ namespace Hermit
         using request_type = boost::beast::http::request<body_type>;
         using response_type = boost::beast::http::response<body_type>;
         using request_executor = std::function<response_type(std::string_view, std::string_view, const request_type&)>;
+        using stream_handler = std::function<bool(std::string_view)>;
+        using stream_response_type = boost::beast::http::response<boost::beast::http::empty_body>;
+        using stream_request_executor = std::function<stream_response_type(std::string_view, std::string_view,
+            const request_type&, const stream_handler&)>;
         static void ensure_success(const response_type& response);
         tcp(); ~tcp();
         tcp(const tcp&) = delete; tcp& operator=(const tcp&) = delete;
@@ -28,6 +33,7 @@ namespace Hermit
         void connect(std::string_view host, std::string_view port);
         void close() noexcept;
         response_type request(const request_type& request);
+        stream_response_type stream_request(const request_type& request, const stream_handler& handler);
         template<typename Rep, typename Period> tcp& expires_after(std::chrono::duration<Rep, Period> timeout)
         {
             if (timeout <= std::chrono::duration<Rep, Period>::zero()) tcp_stream.expires_never();

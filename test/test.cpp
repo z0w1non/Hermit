@@ -287,6 +287,118 @@ TEST(parse_command_line, configures_ollama_model_lifecycle_commands)
     }
 }
 
+TEST(parse_command_line, configures_lmstudio_model_management_commands)
+{
+    for (const std::string& action : std::vector<std::string>{ "load", "unload", "download", "download-status" })
+    {
+        commandline_args args{ "Hermit.exe", "models", action, "--backend", "lmstudio", "--llm.model-action-options", "{}" };
+        Hermit::config cfg;
+        EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success) << action;
+        EXPECT_EQ(cfg.command_mode, Hermit::command_mode::manage_lmstudio_model) << action;
+        EXPECT_EQ(cfg.llm.model_action, action) << action;
+        EXPECT_EQ(cfg.llm.port, "1234") << action;
+    }
+    commandline_args override_args{ "Hermit.exe", "models", "load", "--backend", "lmstudio", "--llm.port", "4321",
+        "--llm.model-action-options", R"({"model":"catalog/model"})" };
+    Hermit::config override_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(override_args.argc(), override_args.argv(), override_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(override_cfg.llm.port, "4321");
+}
+
+TEST(parse_command_line, configures_lmstudio_responses_create)
+{
+    commandline_args args{ "Hermit.exe", "responses", "create", "--backend", "lmstudio",
+        "--llm.api-options", R"({"model":"test-model","input":"hello"})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::create_lmstudio_response);
+    EXPECT_EQ(cfg.llm.backend_name, "lmstudio");
+    EXPECT_EQ(cfg.llm.port, "1234");
+    EXPECT_EQ(cfg.llm.api_options, R"({"model":"test-model","input":"hello"})");
+
+    commandline_args missing_options{ "Hermit.exe", "responses", "create", "--backend", "lmstudio" };
+    Hermit::config missing_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(missing_options.argc(), missing_options.argv(), missing_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+
+    commandline_args wrong_backend{ "Hermit.exe", "responses", "create", "--backend", "vllm", "--llm.api-options", "{}" };
+    Hermit::config wrong_backend_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(wrong_backend.argc(), wrong_backend.argv(), wrong_backend_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_lmstudio_native_chat_create)
+{
+    commandline_args args{ "Hermit.exe", "lmstudio-chat", "create", "--backend", "lmstudio",
+        "--llm.api-options", R"({"model":"test-model","input":"hello","previous_response_id":"resp-old"})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::create_lmstudio_chat);
+    EXPECT_EQ(cfg.llm.backend_name, "lmstudio");
+    EXPECT_EQ(cfg.llm.port, "1234");
+    commandline_args wrong_backend{ "Hermit.exe", "lmstudio-chat", "create", "--backend", "ollama", "--llm.api-options", "{}" };
+    Hermit::config wrong_backend_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(wrong_backend.argc(), wrong_backend.argv(), wrong_backend_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_lmstudio_decisions_create)
+{
+    commandline_args args{ "Hermit.exe", "decisions", "create", "--backend", "lmstudio",
+        "--llm.api-options", R"({"model":"decision-model","input":"hello","questions":[{"type":"predicate","name":"greeting","instructions":"Is this a greeting?"}]})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::create_lmstudio_decision);
+    EXPECT_EQ(cfg.llm.port, "1234");
+    commandline_args unsupported{ "Hermit.exe", "decisions", "create", "--backend", "ollama", "--llm.api-options", "{}" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_lmstudio_anthropic_messages_create)
+{
+    commandline_args args{ "Hermit.exe", "messages", "create", "--backend", "lmstudio",
+        "--llm.api-options", R"({"model":"test-model","max_tokens":32,"messages":[{"role":"user","content":"hello"}]})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::create_lmstudio_messages);
+    EXPECT_EQ(cfg.llm.backend_name, "lmstudio");
+    EXPECT_EQ(cfg.llm.port, "1234");
+    commandline_args unsupported{ "Hermit.exe", "messages", "create", "--backend", "ollama", "--llm.api-options", "{}" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_lmstudio_systemone_create)
+{
+    commandline_args args{ "Hermit.exe", "systemone", "create", "--backend", "lmstudio",
+        "--llm.api-options", R"({"model":"decision-model","state":"hello","questions":{"greeting":{"type":"noul","instructions":"Is this a greeting?"}}})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::create_lmstudio_systemone);
+    EXPECT_EQ(cfg.llm.port, "1234");
+    commandline_args unsupported{ "Hermit.exe", "systemone", "create", "--backend", "ollama", "--llm.api-options", "{}" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_vllm_batch_chat_create)
+{
+    commandline_args args{ "Hermit.exe", "batch-chat", "create", "--backend", "vllm",
+        "--llm.api-options", R"({"model":"m","messages":[[{"role":"user","content":"a"}]]})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::create_vllm_batch_chat);
+    EXPECT_EQ(cfg.llm.port, "8000");
+    commandline_args unsupported{ "Hermit.exe", "batch-chat", "create", "--backend", "lmstudio", "--llm.api-options", "{}" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
 TEST(parse_command_line, rejects_model_list_for_unsupported_backends)
 {
     commandline_args args{ "Hermit.exe", "models", "list", "--backend", "tg" };
@@ -296,7 +408,7 @@ TEST(parse_command_line, rejects_model_list_for_unsupported_backends)
 
 TEST(parse_command_line, configures_stable_diffusion_api_actions)
 {
-    for (const std::string& action : std::vector<std::string>{ "progress", "interrupt", "skip", "interrogate", "extra-single-image", "extra-batch-images", "png-info", "options", "options-set", "create-embedding", "create-hypernetwork", "train-embedding", "train-hypernetwork", "memory", "scripts", "script-info", "extensions", "cmd-flags", "samplers", "schedulers", "upscalers", "latent-upscale-modes", "sd-models", "sd-vae", "hypernetworks", "face-restorers", "realesrgan-models", "prompt-styles", "embeddings", "refresh-embeddings", "refresh-checkpoints", "refresh-vae", "unload-checkpoint", "reload-checkpoint" })
+    for (const std::string& action : std::vector<std::string>{ "progress", "interrupt", "skip", "interrogate", "extra-single-image", "extra-batch-images", "png-info", "options", "options-set", "create-embedding", "create-hypernetwork", "train-embedding", "train-hypernetwork", "memory", "scripts", "script-info", "extensions", "cmd-flags", "samplers", "schedulers", "upscalers", "latent-upscale-modes", "sd-models", "sd-vae", "hypernetworks", "face-restorers", "realesrgan-models", "prompt-styles", "embeddings", "refresh-embeddings", "refresh-checkpoints", "refresh-vae", "unload-checkpoint", "reload-checkpoint", "server-kill", "server-restart", "server-stop" })
     {
         std::vector<std::string> arguments{ "Hermit.exe", "sd-api", action };
         if (action == "interrogate")
@@ -333,6 +445,56 @@ TEST(parse_command_line, configures_stable_diffusion_api_actions)
     commandline_args missing_options{ "Hermit.exe", "sd-api", "interrogate" };
     Hermit::config cfg;
     EXPECT_EQ(Hermit::command_line::parse(missing_options.argc(), missing_options.argv(), cfg), Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_generic_stable_diffusion_api_request)
+{
+    for (const std::string method : {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+    {
+        commandline_args args{ "Hermit.exe", "sd-api", "request", "--sd.api-method", method, "--sd.api-path", "/extension/custom", "--sd.api-options", R"({"value":1})" };
+        Hermit::config cfg;
+        EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+        EXPECT_EQ(cfg.command_mode, Hermit::command_mode::request_sd_api);
+        EXPECT_EQ(cfg.sd.api_method, method);
+        EXPECT_EQ(cfg.sd.api_path, "/extension/custom");
+    }
+    commandline_args invalid_method{ "Hermit.exe", "sd-api", "request", "--sd.api-method", "TRACE" };
+    Hermit::config invalid_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(invalid_method.argc(), invalid_method.argv(), invalid_cfg), Hermit::command_line::parse_result::program_options_error);
+    commandline_args routes{ "Hermit.exe", "sd-api", "routes" };
+    Hermit::config routes_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(routes.argc(), routes.argv(), routes_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(routes_cfg.sd.api_action, "routes");
+    commandline_args invalid_server_action{ "Hermit.exe", "server", "request" };
+    Hermit::config server_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(invalid_server_action.argc(), invalid_server_action.argv(), server_cfg), Hermit::command_line::parse_result::program_options_error);
+    commandline_args multipart{ "Hermit.exe", "sd-api", "request", "--sd.api-method", "POST", "--sd.api-path", "/upload", "--sd.api-body-file", "payload.bin", "--sd.api-content-type", "multipart/form-data; boundary=test", "--sd.api-headers", R"({"X-Trace":"trace-1"})" };
+    Hermit::config multipart_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(multipart.argc(), multipart.argv(), multipart_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(multipart_cfg.sd.api_body_file, "payload.bin");
+    EXPECT_EQ(multipart_cfg.sd.api_content_type, "multipart/form-data; boundary=test");
+    EXPECT_EQ(multipart_cfg.sd.api_headers, R"({"X-Trace":"trace-1"})");
+    commandline_args conflicting_body{ "Hermit.exe", "sd-api", "request", "--sd.api-body-file", "payload.bin", "--sd.api-options", "{}" };
+    Hermit::config conflicting_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(conflicting_body.argc(), conflicting_body.argv(), conflicting_cfg), Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_generic_llm_backend_api_request)
+{
+    commandline_args lmstudio{ "Hermit.exe", "backend-api", "request", "--backend", "lmstudio",
+        "--llm.api-method", "POST", "--llm.api-path", "/v1/responses", "--llm.api-options", R"({"input":"hello"})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(lmstudio.argc(), lmstudio.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::request_llm_api);
+    EXPECT_EQ(cfg.llm.port, "1234");
+    EXPECT_EQ(cfg.llm.api_path, "/v1/responses");
+    commandline_args llama{ "Hermit.exe", "backend-api", "request", "--backend", "llama-cpp" };
+    Hermit::config llama_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(llama.argc(), llama.argv(), llama_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(llama_cfg.llm.port, "8080");
+    commandline_args unsupported{ "Hermit.exe", "backend-api", "request", "--backend", "sd" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg), Hermit::command_line::parse_result::program_options_error);
 }
 
 TEST(parse_command_line, configures_comfyui_queue_and_control_operations)
@@ -575,6 +737,18 @@ TEST(parse_command_line, separates_sd_common_and_img2img_seed_resize_options)
     EXPECT_EQ(cfg.sd.common.seed_resize_from_w, 768);
     EXPECT_EQ(cfg.sd.img2img.seed_resize_from_h, 640);
     EXPECT_EQ(cfg.sd.img2img.seed_resize_from_w, 896);
+}
+
+TEST(parse_command_line, accepts_sd_generation_options)
+{
+    commandline_args args
+    {
+        "Hermit.exe", "generate", "--backend", "sd",
+        "--sd.generation-options", R"({"custom_extension_field":true})"
+    };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.sd.generation_options, R"({"custom_extension_field":true})");
 }
 
 struct help_option_test : testing::TestWithParam<const char*> {};

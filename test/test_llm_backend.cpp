@@ -154,6 +154,515 @@ TEST(llm_backend_parameters, model_action_rejects_missing_fields_and_non_objects
     EXPECT_THROW(Hermit::llm::manage_ollama_model(cfg, executor), Hermit::command_line_exception);
 }
 
+TEST(llm_backend_parameters, routes_lmstudio_model_management_with_json_and_encoded_job_path)
+{
+    struct action_case
+    {
+        std::string action;
+        std::string target;
+        Hermit::public_api::http_method method;
+        std::string body;
+    };
+    const std::vector<action_case> actions
+    {
+        { "load", "/api/v1/models/load", Hermit::public_api::http_method::post,
+            R"({"context_length":8192,"flash_attention":true,"model":"catalog/model"})" },
+        { "unload", "/api/v1/models/unload", Hermit::public_api::http_method::post,
+            R"({"instance_id":"instance-1"})" },
+        { "download", "/api/v1/models/download", Hermit::public_api::http_method::post,
+            R"({"model":"catalog/model","quantization":"Q4_K_M"})" },
+        { "download-status", "/api/v1/models/download/status/job%2Fpart", Hermit::public_api::http_method::get, "" }
+    };
+    for (const action_case& action : actions)
+    {
+        Hermit::config cfg;
+        cfg.llm.backend_name = "lmstudio";
+        cfg.llm.model_action = action.action;
+        cfg.llm.model_action_options = action.action == "load" ? action.body
+            : action.action == "unload" ? action.body
+            : action.action == "download" ? action.body : R"({"job_id":"job/part"})";
+        cfg.llm.host = "lmstudio-host";
+        cfg.llm.port = "1234";
+        cfg.llm.api_key = "lm-token";
+        cfg.timeout_connect = 2;
+        cfg.timeout_request = 7;
+        const Hermit::public_api::http_executor executor{ [&action](const Hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, action.method);
+            EXPECT_EQ(request.target, action.target);
+            EXPECT_EQ(request.options.authorization, "Bearer lm-token");
+            EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+            EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 7 });
+            EXPECT_EQ(request.body, action.body);
+            return Hermit::public_api::http_response_data{ 200, "{\"status\":\"ok\"}" };
+        } };
+        EXPECT_EQ(Hermit::llm::manage_lmstudio_model(cfg, executor), "{\"status\":\"ok\"}") << action.action;
+    }
+}
+
+TEST(llm_backend_parameters, rejects_invalid_lmstudio_model_management_options)
+{
+    Hermit::config cfg;
+    cfg.llm.model_action = "load";
+    cfg.llm.model_action_options = R"({"context_length":8192})";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "Executor must not be called for invalid LM Studio input";
+        return Hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    EXPECT_THROW(Hermit::llm::manage_lmstudio_model(cfg, executor), Hermit::command_line_exception);
+    cfg.llm.model_action = "unload";
+    cfg.llm.model_action_options = "[]";
+    EXPECT_THROW(Hermit::llm::manage_lmstudio_model(cfg, executor), Hermit::command_line_exception);
+    cfg.llm.model_action = "download-status";
+    cfg.llm.model_action_options = R"({"job_id":"job-1","extra":true})";
+    EXPECT_THROW(Hermit::llm::manage_lmstudio_model(cfg, executor), Hermit::command_line_exception);
+    cfg.llm.model_action_options = R"({"job_id":".."})";
+    EXPECT_THROW(Hermit::llm::manage_lmstudio_model(cfg, executor), Hermit::command_line_exception);
+    cfg.llm.model_action = "unknown";
+    cfg.llm.model_action_options = "{}";
+    EXPECT_THROW(Hermit::llm::manage_lmstudio_model(cfg, executor), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, sends_lmstudio_responses_request_and_validates_json_contract)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "lmstudio-host";
+    cfg.llm.port = "1234";
+    cfg.llm.api_key = "lm-token";
+    cfg.llm.api_options = R"({"model":"test-model","input":[{"role":"user","content":"hello"}],"previous_response_id":"resp-previous"})";
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 7;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.host, "lmstudio-host");
+        EXPECT_EQ(request.port, "1234");
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/responses");
+        EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(
+            R"({"model":"test-model","input":[{"role":"user","content":"hello"}],"previous_response_id":"resp-previous"})"));
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer lm-token");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 7 });
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"id":"resp-1","object":"response","status":"completed","output":[]})", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::create_lmstudio_response(cfg, executor),
+        R"({"id":"resp-1","object":"response","status":"completed","output":[]})");
+}
+
+TEST(llm_backend_parameters, sends_lmstudio_native_chat_request_and_validates_response)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "lmstudio-host";
+    cfg.llm.port = "1234";
+    cfg.llm.api_key = "lm-token";
+    cfg.llm.api_options = R"({"model":"ibm/granite-4-micro","input":"hello","store":false,"context_length":4096})";
+    cfg.timeout_connect = 3;
+    cfg.timeout_request = 8;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.host, "lmstudio-host");
+        EXPECT_EQ(request.port, "1234");
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/api/v1/chat");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer lm-token");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 3 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 8 });
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("context_length"), 4096);
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"model_instance_id":"ibm/granite-4-micro","output":[{"type":"message","content":"hello"}],"stats":{"input_tokens":1},"response_id":"resp-1"})",
+            "application/json" };
+    } };
+    EXPECT_NE(Hermit::llm::create_lmstudio_chat(cfg, executor).find("resp-1"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, rejects_invalid_lmstudio_native_chat_request_or_response)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor unused_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid native chat request must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"({"model_instance_id":"m","output":[]})" };
+    } };
+    for (const std::string options : { "[]", R"({"input":"hello"})", R"({"model":"m"})",
+        R"({"model":"m","input":1})", R"({"model":"m","input":"hello","stream":"yes"})",
+        R"({"model":"m","input":"hello","stream":true})" })
+    {
+        cfg.llm.api_options = options;
+        EXPECT_THROW(Hermit::llm::create_lmstudio_chat(cfg, unused_executor), Hermit::command_line_exception) << options;
+    }
+    cfg.llm.api_options = R"({"model":"m","input":"hello"})";
+    const Hermit::public_api::http_executor invalid_response_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"model_instance_id":"m","output":1})" };
+    } };
+    EXPECT_THROW(Hermit::llm::create_lmstudio_chat(cfg, invalid_response_executor), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, streams_lmstudio_native_chat_events_as_received)
+{
+    Hermit::config cfg;
+    cfg.llm.api_options = R"({"model":"m","input":"hello","stream":true})";
+    std::string received;
+    const Hermit::public_api::http_executor unused_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "non-stream executor must not be used";
+        return Hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    const Hermit::public_api::http_stream_executor stream_executor{ [](const Hermit::public_api::http_request_data& request,
+        const Hermit::public_api::http_stream_handler& handler)
+    {
+        EXPECT_EQ(request.target, "/api/v1/chat");
+        EXPECT_EQ(request.content_type, "application/json");
+        const std::string first{ "event: chat.start\ndata: {\"type\":\"chat.start\"}\n\n" };
+        const std::string last{ "event: chat.end\ndata: {\"type\":\"chat.end\"}\n\n" };
+        EXPECT_TRUE(handler(first));
+        EXPECT_TRUE(handler(last));
+        return Hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+    const Hermit::public_api::http_stream_handler writer{ [&received](std::string_view chunk)
+    {
+        received.append(chunk);
+        return true;
+    } };
+    EXPECT_TRUE(Hermit::llm::create_lmstudio_chat(cfg, unused_executor, stream_executor, writer).empty());
+    EXPECT_NE(received.find("chat.start"), std::string::npos);
+    EXPECT_NE(received.find("chat.end"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, rejects_invalid_or_streaming_lmstudio_responses_requests_before_transport)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid Responses input must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"({"id":"resp-1","output":[]})" };
+    } };
+    for (const std::string options : { "[]", R"({"input":"hello"})", R"({"model":"m"})",
+        R"({"model":"m","input":1})", R"({"model":"m","input":"hello","stream":true})",
+        R"({"model":"m","input":"hello","stream":"yes"})" })
+    {
+        cfg.llm.api_options = options;
+        EXPECT_THROW(Hermit::llm::create_lmstudio_response(cfg, executor), Hermit::command_line_exception) << options;
+    }
+
+    cfg.llm.api_options = R"({"model":"m","input":"hello"})";
+    const Hermit::public_api::http_executor invalid_response_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"id":"resp-1"})" };
+    } };
+    EXPECT_THROW(Hermit::llm::create_lmstudio_response(cfg, invalid_response_executor), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, streams_lmstudio_responses_as_received_sse_chunks)
+{
+    Hermit::config cfg;
+    cfg.llm.api_options = R"({"model":"m","input":"hello","stream":true})";
+    std::string received;
+    int chunk_count{};
+    const Hermit::public_api::http_executor unused_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "non-stream executor must not be used";
+        return Hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    const Hermit::public_api::http_stream_executor stream_executor{ [&chunk_count](const Hermit::public_api::http_request_data& request,
+        const Hermit::public_api::http_stream_handler& handler)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/responses");
+        EXPECT_EQ(request.content_type, "application/json");
+        const std::string first{ "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" };
+        const std::string second{ "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n" };
+        EXPECT_TRUE(handler(first));
+        EXPECT_TRUE(handler(second));
+        chunk_count = 2;
+        return Hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+    const Hermit::public_api::http_stream_handler writer{ [&received](std::string_view chunk)
+    {
+        received.append(chunk);
+        return true;
+    } };
+    EXPECT_TRUE(Hermit::llm::create_lmstudio_response(cfg, unused_executor, stream_executor, writer).empty());
+    EXPECT_EQ(chunk_count, 2);
+    EXPECT_NE(received.find("response.created"), std::string::npos);
+    EXPECT_NE(received.find("response.completed"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, sends_lmstudio_decisions_request_and_validates_answers)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "lmstudio-host";
+    cfg.llm.port = "1234";
+    cfg.llm.api_key = "lm-token";
+    cfg.llm.api_options = R"({"model":"decision-model","input":"I was charged twice.","questions":[{"type":"predicate","name":"angry","instructions":"Is the customer angry?"}]})";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/decisions");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer lm-token");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("questions").at(0).at("name"), "angry");
+        return Hermit::public_api::http_response_data{ 200, R"({"model":"decision-model","answers":[{"type":"predicate","name":"angry","probability":0.98}],"usage":{}})" };
+    } };
+    EXPECT_NE(Hermit::llm::create_lmstudio_decision(cfg, executor).find("\"answers\""), std::string::npos);
+}
+
+TEST(llm_backend_parameters, rejects_invalid_lmstudio_decisions_before_transport)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid Decisions input must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"({"answers":[]})" };
+    } };
+    for (const std::string options : { "[]", R"({"input":"text","questions":[]})",
+        R"({"model":"m","input":4,"questions":[{}]})",
+        R"({"model":"m","input":"text","questions":[{"type":2,"instructions":"test"}]})" })
+    {
+        cfg.llm.api_options = options;
+        EXPECT_THROW(Hermit::llm::create_lmstudio_decision(cfg, executor), Hermit::command_line_exception) << options;
+    }
+    cfg.llm.api_options = R"({"model":"m","input":"text","questions":[{"type":"predicate","instructions":"test"}]})";
+    const Hermit::public_api::http_executor invalid_response_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"model":"m"})" };
+    } };
+    EXPECT_THROW(Hermit::llm::create_lmstudio_decision(cfg, invalid_response_executor), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, sends_lmstudio_anthropic_messages_request_and_validates_response)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "lmstudio-host";
+    cfg.llm.port = "1234";
+    cfg.llm.api_key = "lm-token";
+    cfg.llm.api_options = R"({"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hello"}],"stream":false})";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/messages");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_FALSE(request.options.authorization.has_value());
+        EXPECT_EQ(request.headers.at("x-api-key"), "lm-token");
+        const nlohmann::json sent{ nlohmann::json::parse(request.body) };
+        EXPECT_EQ(sent.at("max_tokens"), 64);
+        EXPECT_EQ(sent.at("messages").at(0).at("content"), "hello");
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"m","stop_reason":"end_turn"})",
+            "application/json" };
+    } };
+    EXPECT_NE(Hermit::llm::create_lmstudio_messages(cfg, executor).find("msg_1"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, rejects_invalid_lmstudio_anthropic_messages_request_or_response)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid Anthropic Messages request must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"({"type":"message","role":"assistant","content":[]})" };
+    } };
+    for (const std::string options : { "[]", R"({"model":"m","messages":[]})",
+        R"({"model":"m","max_tokens":0,"messages":[{"role":"user","content":"x"}]})",
+        R"({"model":"m","max_tokens":2,"messages":[{"role":"system","content":"x"}]})",
+        R"({"model":"m","max_tokens":2,"messages":[{"role":"user","content":2}]})",
+        R"({"model":"m","max_tokens":2,"messages":[{"role":"user","content":"x"}],"stream":"yes"})",
+        R"({"model":"m","max_tokens":2,"messages":[{"role":"user","content":"x"}],"stream":true})" })
+    {
+        cfg.llm.api_options = options;
+        EXPECT_THROW(Hermit::llm::create_lmstudio_messages(cfg, executor), Hermit::command_line_exception) << options;
+    }
+    cfg.llm.api_options = R"({"model":"m","max_tokens":2,"messages":[{"role":"user","content":"x"}]})";
+    const Hermit::public_api::http_executor invalid_response{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"type":"not_message","content":[]})" };
+    } };
+    EXPECT_THROW(Hermit::llm::create_lmstudio_messages(cfg, invalid_response), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, streams_lmstudio_anthropic_messages_sse_as_received)
+{
+    Hermit::config cfg;
+    cfg.llm.api_key = "secret";
+    cfg.llm.api_options = R"({"model":"m","max_tokens":10,"messages":[{"role":"user","content":"x"}],"stream":true})";
+    std::string received;
+    const Hermit::public_api::http_executor unused_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "streaming must use stream executor";
+        return Hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    const Hermit::public_api::http_stream_executor stream_executor{ [](const Hermit::public_api::http_request_data& request,
+        const Hermit::public_api::http_stream_handler& handler)
+    {
+        EXPECT_EQ(request.target, "/v1/messages");
+        EXPECT_EQ(request.headers.at("x-api-key"), "secret");
+        const std::string chunk{ "event: message_start\ndata: {\"type\":\"message_start\"}\n\n" };
+        EXPECT_TRUE(handler(chunk));
+        return Hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+    const Hermit::public_api::http_stream_handler writer{ [&received](std::string_view chunk)
+    {
+        received.append(chunk);
+        return true;
+    } };
+    EXPECT_TRUE(Hermit::llm::create_lmstudio_messages(cfg, unused_executor, stream_executor, writer).empty());
+    EXPECT_NE(received.find("message_start"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, sends_lmstudio_jev_systemone_request_and_validates_answers)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "lmstudio-host";
+    cfg.llm.port = "1234";
+    cfg.llm.api_key = "jev-token";
+    cfg.llm.api_options = R"({"model":"decision-model","state":"charged twice","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"},"severity":{"type":"score","instructions":"Rate severity","criteria":["low","medium","high"]},"cause":{"type":"choice","instructions":"Choose cause","criteria":{"billing":"billing issue","other":"other"}}}})";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/systemone");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer jev-token");
+        const nlohmann::json sent{ nlohmann::json::parse(request.body) };
+        EXPECT_EQ(sent.at("state"), "charged twice");
+        EXPECT_EQ(sent.at("questions").at("cause").at("type"), "choice");
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"answers":{"angry":{"value":true},"severity":{"value":0.8},"cause":{"value":"billing"}}})", "application/json" };
+    } };
+    EXPECT_NE(Hermit::llm::create_lmstudio_systemone(cfg, executor).find("severity"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, rejects_invalid_lmstudio_jev_systemone_request_or_response)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid System One request must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"({"answers":{}})" };
+    } };
+    for (const std::string options : { "[]", R"({"model":"m","state":"x","questions":[]})",
+        R"({"model":"m","state":"x","questions":{"q":{"type":"noul"}}})",
+        R"({"model":"m","state":"x","questions":{"q":{"type":"unknown","instructions":"x"}}})",
+        R"({"model":"m","state":"x","questions":{"q":{"type":"score","instructions":"x","criteria":[]}}})" })
+    {
+        cfg.llm.api_options = options;
+        EXPECT_THROW(Hermit::llm::create_lmstudio_systemone(cfg, executor), Hermit::command_line_exception) << options;
+    }
+    cfg.llm.api_options = R"({"model":"m","state":"x","questions":{"q":{"type":"noul","instructions":"x"}}})";
+    const Hermit::public_api::http_executor missing_answer{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"answers":{}})" };
+    } };
+    EXPECT_THROW(Hermit::llm::create_lmstudio_systemone(cfg, missing_answer), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, sends_vllm_batched_chat_and_checks_choice_count)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "vllm-host";
+    cfg.llm.port = "8000";
+    cfg.llm.api_key = "vllm-token";
+    cfg.llm.api_options = R"({"model":"test-model","messages":[[{"role":"user","content":"one"}],[{"role":"user","content":"two"}]],"max_tokens":12})";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/chat/completions/batch");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer vllm-token");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("messages").size(), 2U);
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"choices":[{"index":0,"message":{"role":"assistant","content":"first"}},{"index":1,"message":{"role":"assistant","content":"second"}}]})",
+            "application/json" };
+    } };
+    EXPECT_NE(Hermit::llm::create_vllm_batch_chat(cfg, executor).find("second"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, rejects_invalid_vllm_batch_chat_request_or_response)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor unused_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid batch chat must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"({"choices":[]})" };
+    } };
+    for (const std::string options : { "[]", R"({"messages":[[{"role":"user","content":"x"}]]})",
+        R"({"model":"m","messages":[]})", R"({"model":"m","messages":[[]]})",
+        R"({"model":"m","messages":[[{"role":"user","content":2}]]})",
+        R"({"model":"m","messages":[[{"role":"user","content":"x"}]],"stream":true})",
+        R"({"model":"m","messages":[[{"role":"user","content":"x"}]],"tools":[]})",
+        R"({"model":"m","messages":[[{"role":"user","content":"x"}]],"n":2})" })
+    {
+        cfg.llm.api_options = options;
+        EXPECT_THROW(Hermit::llm::create_vllm_batch_chat(cfg, unused_executor), Hermit::command_line_exception) << options;
+    }
+    cfg.llm.api_options = R"({"model":"m","messages":[[{"role":"user","content":"x"}],[{"role":"user","content":"y"}]]})";
+    const Hermit::public_api::http_executor wrong_count{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"choices":[{"index":0}]})" };
+    } };
+    EXPECT_THROW(Hermit::llm::create_vllm_batch_chat(cfg, wrong_count), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, sends_generic_backend_api_request_with_method_body_auth_and_headers)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "backend-host";
+    cfg.llm.port = "8080";
+    cfg.llm.api_key = "test-token";
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/v1/responses";
+    cfg.llm.api_options = R"({"model":"test-model","input":"hello"})";
+    cfg.llm.api_content_type = "application/json";
+    cfg.llm.api_headers = R"({"X-Trace":"trace-1"})";
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 7;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.host, "backend-host");
+        EXPECT_EQ(request.port, "8080");
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/responses");
+        EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(R"({"model":"test-model","input":"hello"})"));
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer test-token");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 7 });
+        EXPECT_EQ(request.headers.at("X-Trace"), "trace-1");
+        return Hermit::public_api::http_response_data{ 200, R"({"id":"resp-1"})", "application/json", false };
+    } };
+    const Hermit::public_api::http_response_data response{ Hermit::llm::make_api_request(cfg, executor) };
+    EXPECT_EQ(response.body, R"({"id":"resp-1"})");
+}
+
+TEST(llm_backend_parameters, rejects_unsafe_generic_backend_api_requests_before_transport)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid request must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    for (const std::string path : { "", "relative", "//remote/path", "/../admin", "/api/%2e%2e/admin", "/api#fragment", "/api\\admin" })
+    {
+        cfg.llm.api_path = path;
+        EXPECT_THROW(Hermit::llm::make_api_request(cfg, executor), std::invalid_argument) << path;
+    }
+    cfg.llm.api_path = "/v1/responses";
+    cfg.llm.api_method = "TRACE";
+    EXPECT_THROW(Hermit::llm::make_api_request(cfg, executor), std::invalid_argument);
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_options = "[]";
+    cfg.llm.api_body_file = "payload.bin";
+    EXPECT_THROW(Hermit::llm::make_api_request(cfg, executor), std::invalid_argument);
+    cfg.llm.api_options.clear();
+    cfg.llm.api_body_file.clear();
+    cfg.llm.api_headers = R"({"Host":"remote.example"})";
+    EXPECT_THROW(Hermit::llm::make_api_request(cfg, executor), std::invalid_argument);
+}
+
 TEST(llm_backend_parameters, model_list_rejects_http_errors)
 {
     Hermit::config cfg;

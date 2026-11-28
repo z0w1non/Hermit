@@ -11,6 +11,7 @@ namespace Hermit::public_api
         std::string_view target, std::string body, http_transport_options options = {});
     http_request make_http_request(tcp::request_executor executor);
     http_executor make_http_executor(tcp::request_executor executor);
+    http_stream_executor make_http_stream_executor(tcp::stream_request_executor executor);
     tcp::request_executor make_tcp_executor(http_executor executor);
 }
 

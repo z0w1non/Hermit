@@ -17,6 +17,7 @@ namespace Hermit
         std::string tokenize_target, detokenize_target, tokenize_options;
         std::string running_models_target, model_info_target, model_info_options;
         std::string model_action, model_action_target, model_action_options;
+        std::string api_method, api_path, api_options, api_body_file, api_content_type, api_headers;
         std::vector<std::string> embedding_inputs;
         std::string embedding_options;
         std::vector<int> token_ids;

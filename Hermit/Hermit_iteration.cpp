@@ -262,8 +262,15 @@ namespace Hermit
 
             if (cfg.command_mode == command_mode::list_models || cfg.command_mode == command_mode::list_running_models
                 || cfg.command_mode == command_mode::get_ollama_version || cfg.command_mode == command_mode::manage_comfyui_api
-                || cfg.command_mode == command_mode::manage_sd_api
+                || cfg.command_mode == command_mode::manage_sd_api || cfg.command_mode == command_mode::request_sd_api
                 || cfg.command_mode == command_mode::show_model || cfg.command_mode == command_mode::manage_ollama_model
+                || cfg.command_mode == command_mode::manage_lmstudio_model || cfg.command_mode == command_mode::create_lmstudio_chat
+                || cfg.command_mode == command_mode::create_lmstudio_response
+                || cfg.command_mode == command_mode::create_lmstudio_decision
+                || cfg.command_mode == command_mode::create_lmstudio_messages
+                || cfg.command_mode == command_mode::create_lmstudio_systemone
+                || cfg.command_mode == command_mode::create_vllm_batch_chat
+                || cfg.command_mode == command_mode::request_llm_api
                 || cfg.command_mode == command_mode::create_embeddings
                 || cfg.command_mode == command_mode::tokenize || cfg.command_mode == command_mode::detokenize)
             {
@@ -279,16 +286,76 @@ namespace Hermit
                         transport.expires_after(std::chrono::seconds{ cfg.timeout_connect }).connect(host, port);
                         return transport.expires_after(std::chrono::seconds{ cfg.timeout_request }).request(request);
                     }) };
+                const public_api::http_stream_executor stream_executor{ public_api::make_http_stream_executor(
+                    [&transport, &cfg](std::string_view host, std::string_view port, const tcp::request_type& request,
+                        const tcp::stream_handler& handler)
+                    {
+                        transport.expires_after(std::chrono::seconds{ cfg.timeout_connect }).connect(host, port);
+                        return transport.expires_after(std::chrono::seconds{ cfg.timeout_request }).stream_request(request, handler);
+                    }) };
+                if (cfg.command_mode == command_mode::request_sd_api)
+                {
+                    const public_api::http_response_data response{ sd::make_api_request(cfg, executor) };
+                    if (response.is_binary)
+                    {
+                        boost::nowide::cout.write(response.body.data(), static_cast<std::streamsize>(response.body.size()));
+                        boost::nowide::cout.flush();
+                    }
+                    else
+                    {
+                        boost::nowide::cout << response.body << '\n' << std::flush;
+                    }
+                    return 0;
+                }
+                if (cfg.command_mode == command_mode::request_llm_api)
+                {
+                    const public_api::http_response_data response{ llm::make_api_request(cfg, executor) };
+                    if (response.is_binary)
+                    {
+                        boost::nowide::cout.write(response.body.data(), static_cast<std::streamsize>(response.body.size()));
+                        boost::nowide::cout.flush();
+                    }
+                    else
+                    {
+                        boost::nowide::cout << response.body << '\n' << std::flush;
+                    }
+                    return 0;
+                }
+                if (cfg.command_mode == command_mode::create_lmstudio_response || cfg.command_mode == command_mode::create_lmstudio_chat
+                    || cfg.command_mode == command_mode::create_lmstudio_messages)
+                {
+                    const public_api::http_stream_handler writer{ [](std::string_view chunk)
+                    {
+                        boost::nowide::cout.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+                        boost::nowide::cout.flush();
+                        return true;
+                    } };
+                    const std::string response{ cfg.command_mode == command_mode::create_lmstudio_chat
+                        ? llm::create_lmstudio_chat(cfg, executor, stream_executor, writer)
+                        : cfg.command_mode == command_mode::create_lmstudio_messages
+                            ? llm::create_lmstudio_messages(cfg, executor, stream_executor, writer)
+                            : llm::create_lmstudio_response(cfg, executor, stream_executor, writer) };
+                    if (!response.empty()) boost::nowide::cout << response << '\n' << std::flush;
+                    return 0;
+                }
                 const std::string response{ cfg.command_mode == command_mode::list_models ? llm::list_models(cfg, executor)
                     : cfg.command_mode == command_mode::list_running_models ? llm::list_running_models(cfg, executor)
                     : cfg.command_mode == command_mode::get_ollama_version ? llm::get_ollama_version(cfg, executor)
                     : cfg.command_mode == command_mode::show_model ? llm::show_model(cfg, executor)
                     : cfg.command_mode == command_mode::manage_ollama_model ? llm::manage_ollama_model(cfg, executor)
+                    : cfg.command_mode == command_mode::manage_lmstudio_model ? llm::manage_lmstudio_model(cfg, executor)
+                    : cfg.command_mode == command_mode::create_lmstudio_chat ? llm::create_lmstudio_chat(cfg, executor)
+                    : cfg.command_mode == command_mode::create_lmstudio_response ? llm::create_lmstudio_response(cfg, executor)
+                    : cfg.command_mode == command_mode::create_lmstudio_decision ? llm::create_lmstudio_decision(cfg, executor)
+                    : cfg.command_mode == command_mode::create_lmstudio_messages ? llm::create_lmstudio_messages(cfg, executor)
+                    : cfg.command_mode == command_mode::create_lmstudio_systemone ? llm::create_lmstudio_systemone(cfg, executor)
+                    : cfg.command_mode == command_mode::create_vllm_batch_chat ? llm::create_vllm_batch_chat(cfg, executor)
                     : cfg.command_mode == command_mode::manage_comfyui_api ? cu::manage_api(cfg, executor)
                     : cfg.command_mode == command_mode::manage_sd_api ? sd::manage_api(cfg, executor)
                     : cfg.command_mode == command_mode::create_embeddings ? llm::create_embeddings(cfg, executor)
                     : cfg.command_mode == command_mode::tokenize ? llm::tokenize(cfg, executor) : llm::detokenize(cfg, executor) };
-                if (cfg.command_mode == command_mode::manage_comfyui_api && cu::api_returns_binary(cfg.cu))
+                if ((cfg.command_mode == command_mode::manage_comfyui_api && cu::api_returns_binary(cfg.cu))
+                    || (cfg.command_mode == command_mode::manage_sd_api && cfg.sd.api_action == "sysinfo-download"))
                 {
                     boost::nowide::cout.write(response.data(), static_cast<std::streamsize>(response.size()));
                     boost::nowide::cout.flush();

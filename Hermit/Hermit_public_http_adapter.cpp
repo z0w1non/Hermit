@@ -1,13 +1,35 @@
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <string>
 #include <utility>
+
+#include <boost/beast/version.hpp>
 
 #include "Hermit_public_http_adapter.hpp"
 #include "Hermit_errors.hpp"
 
 namespace Hermit::public_api
 {
+    namespace
+    {
+        bool is_binary_content_type(std::string_view content_type)
+        {
+            if (content_type.empty()) return false;
+            std::string media_type{ content_type.substr(0, content_type.find(';')) };
+            std::transform(media_type.begin(), media_type.end(), media_type.begin(), [](unsigned char character)
+            {
+                return static_cast<char>(std::tolower(character));
+            });
+            if (media_type.starts_with("text/")) return false;
+            if (media_type == "application/json" || media_type.ends_with("+json")
+                || media_type == "application/xml" || media_type.ends_with("+xml")
+                || media_type == "application/javascript" || media_type == "application/x-www-form-urlencoded"
+                || media_type == "application/graphql-response+json") return false;
+            return true;
+        }
+    }
+
     void ensure_success(const http_response_data& response)
     {
         if (response.status_code < 200 || response.status_code >= 300)
@@ -44,16 +66,28 @@ namespace Hermit::public_api
     {
         return [executor = std::move(executor)](const http_request_data& data)
         {
-            tcp::request_type request{ data.method == http_method::get
-                ? tcp::make_get_json_request(data.host, data.target)
-                : tcp::make_post_json_request(data.host, data.target, data.body) };
-            if (data.method == http_method::delete_)
+            tcp::request_type request{ boost::beast::http::verb::get, data.target, 11 };
+            request.set(boost::beast::http::field::host, data.host);
+            request.set(boost::beast::http::field::user_agent, BOOST_BEAST_VERSION_STRING);
+            switch (data.method)
             {
-                request.method(boost::beast::http::verb::delete_);
+            case http_method::get: request.method(boost::beast::http::verb::get); break;
+            case http_method::post: request.method(boost::beast::http::verb::post); break;
+            case http_method::put: request.method(boost::beast::http::verb::put); break;
+            case http_method::patch: request.method(boost::beast::http::verb::patch); break;
+            case http_method::delete_: request.method(boost::beast::http::verb::delete_); break;
+            case http_method::head: request.method(boost::beast::http::verb::head); break;
+            case http_method::options: request.method(boost::beast::http::verb::options); break;
             }
+            request.body() = data.body;
+            request.prepare_payload();
             if (!data.content_type.empty())
             {
                 request.set(boost::beast::http::field::content_type, data.content_type);
+            }
+            else if (data.method == http_method::post || data.method == http_method::put || data.method == http_method::patch)
+            {
+                request.set(boost::beast::http::field::content_type, "application/json");
             }
             if (data.options.authorization)
             {
@@ -72,8 +106,40 @@ namespace Hermit::public_api
             {
                 result.content_type = std::string{ content_type };
             }
-            result.is_binary = result.content_type.rfind("image/", 0) == 0 || result.content_type == "application/octet-stream";
+            result.is_binary = is_binary_content_type(result.content_type);
             return result;
+        };
+    }
+
+    http_stream_executor make_http_stream_executor(tcp::stream_request_executor executor)
+    {
+        return [executor = std::move(executor)](const http_request_data& data, const http_stream_handler& handler)
+        {
+            const auto method{ data.method == http_method::get ? boost::beast::http::verb::get
+                : data.method == http_method::put ? boost::beast::http::verb::put
+                : data.method == http_method::patch ? boost::beast::http::verb::patch
+                : data.method == http_method::delete_ ? boost::beast::http::verb::delete_
+                : data.method == http_method::head ? boost::beast::http::verb::head
+                : data.method == http_method::options ? boost::beast::http::verb::options
+                : boost::beast::http::verb::post };
+            tcp::request_type request{ method, data.target, 11 };
+            request.set(boost::beast::http::field::host, data.host);
+            request.set(boost::beast::http::field::user_agent, BOOST_BEAST_VERSION_STRING);
+            request.body() = data.body;
+            request.prepare_payload();
+            if (!data.content_type.empty())
+            {
+                request.set(boost::beast::http::field::content_type, data.content_type);
+            }
+            else if (data.method == http_method::post || data.method == http_method::put || data.method == http_method::patch)
+            {
+                request.set(boost::beast::http::field::content_type, "application/json");
+            }
+            if (data.options.authorization) request.set(boost::beast::http::field::authorization, *data.options.authorization);
+            for (const auto& [name, value] : data.headers) request.set(name, value);
+            const tcp::stream_response_type response{ executor(data.host, data.port, request, handler) };
+            return http_stream_response_data{ static_cast<int>(response.result_int()),
+                std::string{ response[boost::beast::http::field::content_type] } };
         };
     }
 
@@ -86,8 +152,13 @@ namespace Hermit::public_api
             data.port = port;
             data.target = request.target();
             data.body = request.body();
-            data.method = request.method() == boost::beast::http::verb::get ? http_method::get
-                : request.method() == boost::beast::http::verb::delete_ ? http_method::delete_ : http_method::post;
+            const auto method{ request.method() };
+            data.method = method == boost::beast::http::verb::get ? http_method::get
+                : method == boost::beast::http::verb::put ? http_method::put
+                : method == boost::beast::http::verb::patch ? http_method::patch
+                : method == boost::beast::http::verb::delete_ ? http_method::delete_
+                : method == boost::beast::http::verb::head ? http_method::head
+                : method == boost::beast::http::verb::options ? http_method::options : http_method::post;
             data.content_type = std::string{ request[boost::beast::http::field::content_type] };
             for (const auto& field : request)
             {

@@ -196,6 +196,12 @@ namespace Hermit
         std::string port;
         std::string api_action;
         std::string api_options;
+        std::string api_method;
+        std::string api_path;
+        std::string api_body_file;
+        std::string api_content_type;
+        std::string api_headers;
+        std::string generation_options;
 
         std::string prompt_file;
         std::string negative_prompt_file;
