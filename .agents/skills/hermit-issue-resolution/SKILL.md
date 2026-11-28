@@ -16,7 +16,7 @@ metadata:
 - `AGENTS.md`、`SPECIFICATION.md`、`readme.md`、`.vcxproj`、`Hermit/`、`test/`、`.agents/skills/` を調査対象とする。
 - `third_party/` と `vcpkg_installed/` は作業対象・検索対象・検証対象から除外する。
 - 生成物やローカル環境設定を理由なく変更・コミットしない。
-- Windows、MSVC、C++20、vcpkg manifest、Google Test を前提とし、既存の命名・書式・Windows ヘッダー汚染防止方針を維持する。
+- Windows、MSVC、C++20、vcpkg manifest、Google Test を前提とし、AGENTS.md の Google C++ Style Guide 命名規則、CLI/INI の kebab-case、書式、Windows ヘッダー汚染防止方針に従う。
 
 ## 一連の流れ
 

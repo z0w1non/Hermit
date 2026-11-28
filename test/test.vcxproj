@@ -176,7 +176,7 @@
     <ClCompile Include="test_llm_backend.cpp" />
     <ClCompile Include="test_public_api.cpp" />
     <ClInclude Include="test_support.hpp" />
-    <ClInclude Include="..\Hermit\Hermit_public_types.hpp" />
+    <ClInclude Include="..\Hermit\public_types.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Hermit\HermitLib.vcxproj">

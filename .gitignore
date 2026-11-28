@@ -11,6 +11,7 @@
 *.sln.docstates
 *.env
 vcpkg_installed/
+.tools/clang-rename/
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

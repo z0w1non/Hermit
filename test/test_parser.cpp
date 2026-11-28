@@ -3,12 +3,12 @@
 #include <gtest/gtest.h>
 #include <boost/spirit/include/qi.hpp>
 
-#include "Hermit_config.hpp"
-#include "Hermit_context.hpp"
-#include "Hermit_parser.hpp"
-#include "Hermit_parser_internal.hpp"
-#include "Hermit_public.hpp"
-#include "Hermit_value.hpp"
+#include "config.hpp"
+#include "context.hpp"
+#include "parser.hpp"
+#include "parser_internal.hpp"
+#include "public.hpp"
+#include "value.hpp"
 
 namespace parser_attribute_test
 {
@@ -77,9 +77,9 @@ namespace parser_attribute_test
         expression_or_statement content;
     };
 
-    using actual_statement = std::vector<Hermit::parser::expression_type>;
+    using actual_statement = std::vector<hermit::parser::expression_type>;
 
-    using actual_expression_or_statement = boost::variant<Hermit::parser::expression_type, actual_statement>;
+    using actual_expression_or_statement = boost::variant<hermit::parser::expression_type, actual_statement>;
 
     struct actual_content_placeholder
     {
@@ -236,11 +236,11 @@ TEST(parser_grammar, production_expression_ast_variant_propagates_into_placehold
 {
     namespace qi = boost::spirit::qi;
     using iterator_type = std::string::const_iterator;
-    qi::rule<iterator_type, Hermit::parser::expression_type()> expression;
+    qi::rule<iterator_type, hermit::parser::expression_type()> expression;
     qi::rule<iterator_type, parser_attribute_test::actual_statement()> statement;
     qi::rule<iterator_type, parser_attribute_test::actual_expression_or_statement()> content;
     qi::rule<iterator_type, parser_attribute_test::actual_content_placeholder()> placeholder;
-    const Hermit::parser::expression_type expression_ast{};
+    const hermit::parser::expression_type expression_ast{};
     const parser_attribute_test::actual_statement statement_ast{ expression_ast };
     expression = qi::lit('e') >> qi::attr(expression_ast);
     statement = qi::lit('s') >> qi::attr(statement_ast);
@@ -252,7 +252,7 @@ TEST(parser_grammar, production_expression_ast_variant_propagates_into_placehold
     parser_attribute_test::actual_content_placeholder result;
     ASSERT_TRUE(qi::parse(first, input.end(), placeholder, result));
     EXPECT_EQ(first, input.end());
-    const auto* parsed_expression{ boost::get<Hermit::parser::expression_type>(&result.content) };
+    const auto* parsed_expression{ boost::get<hermit::parser::expression_type>(&result.content) };
     ASSERT_NE(parsed_expression, nullptr);
     EXPECT_TRUE(parsed_expression->empty());
 
@@ -664,21 +664,21 @@ TEST(parser_grammar, experimental_increment_and_decrement_require_complete_expre
 namespace boost::spirit::traits
 {
     template<>
-    struct transform_attribute<Hermit::parser::placeholder_type, Hermit::parser::expression_type, boost::spirit::qi::domain>
+    struct transform_attribute<hermit::parser::placeholder_type, hermit::parser::expression_type, boost::spirit::qi::domain>
     {
-        using type = Hermit::parser::expression_type;
+        using type = hermit::parser::expression_type;
 
-        static type pre(Hermit::parser::placeholder_type&)
+        static type pre(hermit::parser::placeholder_type&)
         {
             return {};
         }
 
-        static void post(Hermit::parser::placeholder_type& value, type attribute)
+        static void post(hermit::parser::placeholder_type& value, type attribute)
         {
             value.content = std::move(attribute);
         }
 
-        static void fail(Hermit::parser::placeholder_type&)
+        static void fail(hermit::parser::placeholder_type&)
         {
         }
     };
@@ -689,80 +689,80 @@ TEST(parser_grammar, ast_attribute_cast_wraps_the_complete_placeholder_parser)
     namespace qi = boost::spirit::qi;
     const std::string input{ "{{}}" };
     auto first{ input.begin() };
-    const Hermit::parser::expression_type expression{};
-    Hermit::parser::placeholder_type result;
-    const bool parsed{ qi::parse(first, input.end(), qi::attr_cast<Hermit::parser::placeholder_type>(qi::lit("{{") >> qi::attr(expression) >> qi::lit("}}")), result) };
+    const hermit::parser::expression_type expression{};
+    hermit::parser::placeholder_type result;
+    const bool parsed{ qi::parse(first, input.end(), qi::attr_cast<hermit::parser::placeholder_type>(qi::lit("{{") >> qi::attr(expression) >> qi::lit("}}")), result) };
     EXPECT_TRUE(parsed);
     EXPECT_EQ(first, input.end());
-    const auto* parsed_expression{ boost::get<Hermit::parser::expression_type>(&result.content) };
+    const auto* parsed_expression{ boost::get<hermit::parser::expression_type>(&result.content) };
     ASSERT_NE(parsed_expression, nullptr);
     EXPECT_TRUE(parsed_expression->empty());
 }
 
 TEST(parser, evaluates_literal_and_variable_macros)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
+    hermit::config cfg;
+    hermit::context ctx;
     ctx.set("name", std::string{ "Hermit" });
-    EXPECT_EQ(Hermit::parser::evaluate_recursive("value={{ 1 + 2 }}", cfg, 4, ctx), "value=3");
-    EXPECT_EQ(Hermit::parser::evaluate_recursive("hello {{ name }}", cfg, 4, ctx), "hello Hermit");
+    EXPECT_EQ(hermit::parser::evaluate_recursive("value={{ 1 + 2 }}", cfg, 4, ctx), "value=3");
+    EXPECT_EQ(hermit::parser::evaluate_recursive("hello {{ name }}", cfg, 4, ctx), "hello Hermit");
 }
 
 TEST(parser, non_template_evaluation_boundary)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    const auto handle{ Hermit::parser::make_grammar_handle() };
-    EXPECT_EQ(Hermit::parser::parse("plain", cfg, handle, ctx).size(), 1U);
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 2 + 5 }}", cfg, ctx), "7");
-    EXPECT_EQ(Hermit::parser::parse("plain", cfg, ctx).size(), 1U);
+    hermit::config cfg;
+    hermit::context ctx;
+    const auto handle{ hermit::parser::make_grammar_handle() };
+    EXPECT_EQ(hermit::parser::parse("plain", cfg, handle, ctx).size(), 1U);
+    EXPECT_EQ(hermit::parser::evaluate("{{ 2 + 5 }}", cfg, ctx), "7");
+    EXPECT_EQ(hermit::parser::parse("plain", cfg, ctx).size(), 1U);
 }
 
 TEST(parser_grammar, parses_variable_macro_as_an_unterminated_placeholder)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    const auto ast{ Hermit::parser::parse("{{ name }}", cfg, ctx) };
+    hermit::config cfg;
+    hermit::context ctx;
+    const auto ast{ hermit::parser::parse("{{ name }}", cfg, ctx) };
     ASSERT_EQ(ast.size(), 1U);
-    const auto* placeholder{ boost::get<Hermit::parser::placeholder_type>(&ast.front()) };
+    const auto* placeholder{ boost::get<hermit::parser::placeholder_type>(&ast.front()) };
     ASSERT_NE(placeholder, nullptr);
-    const auto* expression{ boost::get<Hermit::parser::expression_type>(&placeholder->content) };
+    const auto* expression{ boost::get<hermit::parser::expression_type>(&placeholder->content) };
     ASSERT_NE(expression, nullptr);
     ASSERT_EQ(expression->size(), 1U);
 }
 
 TEST(parser_grammar, parses_function_macro_with_nested_expression_arguments)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    const auto ast{ Hermit::parser::parse("{{ string(1 + int(2)) }}", cfg, ctx) };
+    hermit::config cfg;
+    hermit::context ctx;
+    const auto ast{ hermit::parser::parse("{{ string(1 + int(2)) }}", cfg, ctx) };
     ASSERT_EQ(ast.size(), 1U);
-    const auto* placeholder{ boost::get<Hermit::parser::placeholder_type>(&ast.front()) };
+    const auto* placeholder{ boost::get<hermit::parser::placeholder_type>(&ast.front()) };
     ASSERT_NE(placeholder, nullptr);
-    const auto* expression{ boost::get<Hermit::parser::expression_type>(&placeholder->content) };
+    const auto* expression{ boost::get<hermit::parser::expression_type>(&placeholder->content) };
     ASSERT_NE(expression, nullptr);
     ASSERT_EQ(expression->size(), 1U);
 }
 
 TEST(parser_grammar, parses_comma_separated_macro_arguments)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    const auto ast{ Hermit::parser::parse("{{ choice(1, 2) }}", cfg, ctx) };
+    hermit::config cfg;
+    hermit::context ctx;
+    const auto ast{ hermit::parser::parse("{{ choice(1, 2) }}", cfg, ctx) };
     ASSERT_EQ(ast.size(), 1U);
-    const auto* placeholder{ boost::get<Hermit::parser::placeholder_type>(&ast.front()) };
+    const auto* placeholder{ boost::get<hermit::parser::placeholder_type>(&ast.front()) };
     ASSERT_NE(placeholder, nullptr);
-    const auto* expression{ boost::get<Hermit::parser::expression_type>(&placeholder->content) };
+    const auto* expression{ boost::get<hermit::parser::expression_type>(&placeholder->content) };
     ASSERT_NE(expression, nullptr);
     EXPECT_EQ(expression->size(), 1U);
 }
 
 TEST(parser_grammar, rejects_unbalanced_macro_delimiters)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_THROW(Hermit::parser::parse("{{ string(1)", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{ string(1 }", cfg, ctx), std::exception);
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_THROW(hermit::parser::parse("{{ string(1)", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{ string(1 }", cfg, ctx), std::exception);
 }
 
 #if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS)
@@ -982,28 +982,28 @@ TEST(parser, supports_expression_statement_as_unbraced_if_body_with_else)
 #if !defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS) && !defined(HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT)
 TEST(parser, rejects_disabled_statement_syntax)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
+    hermit::config cfg;
+    hermit::context ctx;
     ctx.set("value", 0);
 
-    EXPECT_EQ(Hermit::parser::evaluate("{{1 + 2}}", cfg, ctx), "3");
-    EXPECT_EQ(Hermit::parser::evaluate("{{string(42)}}", cfg, ctx), "42");
+    EXPECT_EQ(hermit::parser::evaluate("{{1 + 2}}", cfg, ctx), "3");
+    EXPECT_EQ(hermit::parser::evaluate("{{string(42)}}", cfg, ctx), "42");
 
-    EXPECT_THROW(Hermit::parser::parse("{{value = 1}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{value++;}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{value++}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{++value}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{if(1){value=1}}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{while(0)value=1}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{{value=1}}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{1 + 2;}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{value = 1}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{value++;}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{value++}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{++value}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{if(1){value=1}}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{while(0)value=1}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{{value=1}}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{1 + 2;}}", cfg, ctx), std::exception);
     ASSERT_NE(ctx.get("value"), nullptr);
-    EXPECT_EQ(Hermit::value_to_string(*ctx.get("value")), "0");
+    EXPECT_EQ(hermit::value_to_string(*ctx.get("value")), "0");
 
-    Hermit::parser::grammar grammar;
-    Hermit::parser::expression_statement_type expression_statement;
-    Hermit::parser::statement_type statement;
-    Hermit::parser::placeholder_result_type placeholder;
+    hermit::parser::grammar grammar;
+    hermit::parser::expression_statement_type expression_statement;
+    hermit::parser::statement_type statement;
+    hermit::parser::placeholder_result_type placeholder;
     EXPECT_FALSE(grammar.parse_expression_statement("1 + 2;", expression_statement));
     EXPECT_FALSE(grammar.parse_statement("value = 1", statement));
     EXPECT_FALSE(grammar.parse_statement("{value=1}", statement));
@@ -1013,8 +1013,8 @@ TEST(parser, rejects_disabled_statement_syntax)
 
 TEST(parser_grammar, reserves_control_and_boolean_keywords_as_identifiers)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
+    hermit::config cfg;
+    hermit::context ctx;
     ctx.set("if", 10);
     ctx.set("else", 20);
     ctx.set("while", 30);
@@ -1023,105 +1023,105 @@ TEST(parser_grammar, reserves_control_and_boolean_keywords_as_identifiers)
     ctx.set("iffy", 1);
     ctx.set("elsewhere", 2);
     ctx.set("while_count", 3);
-    EXPECT_THROW(Hermit::parser::parse("{{if}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{else}}", cfg, ctx), std::exception);
-    EXPECT_THROW(Hermit::parser::parse("{{while}}", cfg, ctx), std::exception);
-    EXPECT_EQ(Hermit::parser::evaluate("{{true}} {{false}}", cfg, ctx), "1 0");
-    EXPECT_EQ(Hermit::parser::evaluate("{{iffy}} {{elsewhere}} {{while_count}}", cfg, ctx), "1 2 3");
+    EXPECT_THROW(hermit::parser::parse("{{if}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{else}}", cfg, ctx), std::exception);
+    EXPECT_THROW(hermit::parser::parse("{{while}}", cfg, ctx), std::exception);
+    EXPECT_EQ(hermit::parser::evaluate("{{true}} {{false}}", cfg, ctx), "1 0");
+    EXPECT_EQ(hermit::parser::evaluate("{{iffy}} {{elsewhere}} {{while_count}}", cfg, ctx), "1 2 3");
 }
 
 TEST(parser, stops_when_recursive_expansion_is_unchanged)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
+    hermit::config cfg;
+    hermit::context ctx;
     ctx.set("loop", std::string{ "{{ loop }}" });
-    EXPECT_EQ(Hermit::parser::evaluate_recursive("{{ loop }}", cfg, 1, ctx), "{{ loop }}");
+    EXPECT_EQ(hermit::parser::evaluate_recursive("{{ loop }}", cfg, 1, ctx), "{{ loop }}");
 }
 
 TEST(parser, evaluates_builtin_macros_inside_templates)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_EQ(Hermit::parser::evaluate("{{ int(\"42\") + 1 }}", cfg, ctx), "43");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ json_literal(\"a\\\"b\") }}", cfg, ctx), "a\\\"b");
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_EQ(hermit::parser::evaluate("{{ int(\"42\") + 1 }}", cfg, ctx), "43");
+    EXPECT_EQ(hermit::parser::evaluate("{{ json_literal(\"a\\\"b\") }}", cfg, ctx), "a\\\"b");
 }
 
 TEST(public_api, expands_builtin_macros_without_mutating_input_context)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
+    hermit::config cfg;
+    hermit::context ctx;
     ctx.set("name", std::string{ "Hermit" });
-    EXPECT_EQ(Hermit::expand_macro("{{ string(42) }} {{ name }}", cfg, ctx), "42 Hermit");
-    EXPECT_EQ(Hermit::value_to_string(*ctx.get("name")), "Hermit");
+    EXPECT_EQ(hermit::expand_macro("{{ string(42) }} {{ name }}", cfg, ctx), "42 Hermit");
+    EXPECT_EQ(hermit::value_to_string(*ctx.get("name")), "Hermit");
 }
 
 TEST(parser, evaluates_nested_builtin_macro_arguments)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_EQ(Hermit::parser::evaluate("{{ string(int(42)) }}", cfg, ctx), "42");
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_EQ(hermit::parser::evaluate("{{ string(int(42)) }}", cfg, ctx), "42");
 }
 
 TEST(parser, evaluates_expression_arguments_before_builtin_conversion)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_EQ(Hermit::parser::evaluate("{{ string(1 + 2 * 3) }}", cfg, ctx), "7");
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_EQ(hermit::parser::evaluate("{{ string(1 + 2 * 3) }}", cfg, ctx), "7");
 }
 
 TEST(parser, resolves_context_variables_as_builtin_arguments)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
+    hermit::config cfg;
+    hermit::context ctx;
     ctx.set("count", 42);
-    EXPECT_EQ(Hermit::parser::evaluate("{{ string(count) }}", cfg, ctx), "42");
+    EXPECT_EQ(hermit::parser::evaluate("{{ string(count) }}", cfg, ctx), "42");
 }
 
 TEST(parser, converts_boolean_expression_result_through_string_macro)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_EQ(Hermit::parser::evaluate("{{ string(1 < 2) }}", cfg, ctx), "1");
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_EQ(hermit::parser::evaluate("{{ string(1 < 2) }}", cfg, ctx), "1");
 }
 
 TEST(parser, evaluates_both_conditional_expression_branches)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 < 2 ? 10 : 20 }}", cfg, ctx), "10");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 2 < 1 ? 10 : 20 }}", cfg, ctx), "20");
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 < 2 ? 10 : 20 }}", cfg, ctx), "10");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 2 < 1 ? 10 : 20 }}", cfg, ctx), "20");
 }
 
 TEST(parser, evaluates_nested_conditional_expressions)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 < 2 ? 3 < 4 ? 10 : 20 : 30 }}", cfg, ctx), "10");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 2 < 1 ? 10 : 3 < 4 ? 20 : 30 }}", cfg, ctx), "20");
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 < 2 ? 3 < 4 ? 10 : 20 : 30 }}", cfg, ctx), "10");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 2 < 1 ? 10 : 3 < 4 ? 20 : 30 }}", cfg, ctx), "20");
 }
 
 TEST(parser, evaluates_logical_conditions_in_conditional_expressions)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_EQ(Hermit::parser::evaluate("{{ (1 < 2 && 2 < 3) ? 1 : 0 }}", cfg, ctx), "1");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ (1 < 2 && 3 < 2) || 4 < 5 ? 1 : 0 }}", cfg, ctx), "1");
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_EQ(hermit::parser::evaluate("{{ (1 < 2 && 2 < 3) ? 1 : 0 }}", cfg, ctx), "1");
+    EXPECT_EQ(hermit::parser::evaluate("{{ (1 < 2 && 3 < 2) || 4 < 5 ? 1 : 0 }}", cfg, ctx), "1");
 }
 
 TEST(parser, parses_overlapping_operator_tokens_with_expected_precedence)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
+    hermit::config cfg;
+    hermit::context ctx;
 
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 | 2 || 0 }}", cfg, ctx), "1");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 || 2 | 0 }}", cfg, ctx), "1");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 & 3 && 4 }}", cfg, ctx), "1");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 && 3 & 1 }}", cfg, ctx), "1");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 << 2 }}", cfg, ctx), "4");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 <= 2 }}", cfg, ctx), "1");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1 >= 2 }}", cfg, ctx), "0");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ 1, 2 }}", cfg, ctx), "2");
-    EXPECT_EQ(Hermit::parser::evaluate("{{ (1, 2) }}", cfg, ctx), "2");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 | 2 || 0 }}", cfg, ctx), "1");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 || 2 | 0 }}", cfg, ctx), "1");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 & 3 && 4 }}", cfg, ctx), "1");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 && 3 & 1 }}", cfg, ctx), "1");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 << 2 }}", cfg, ctx), "4");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 <= 2 }}", cfg, ctx), "1");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1 >= 2 }}", cfg, ctx), "0");
+    EXPECT_EQ(hermit::parser::evaluate("{{ 1, 2 }}", cfg, ctx), "2");
+    EXPECT_EQ(hermit::parser::evaluate("{{ (1, 2) }}", cfg, ctx), "2");
 }
 
 #if defined(HERMIT_ENABLE_EXPERIMENTAL_STATEMENTS)
@@ -1137,8 +1137,8 @@ TEST(parser, evaluates_only_the_selected_conditional_branch)
 
 TEST(parser_grammar, rejects_conditional_expression_without_else_branch)
 {
-    Hermit::config cfg;
-    Hermit::context ctx;
-    EXPECT_THROW(Hermit::parser::parse("{{ 1 ? 2 }}", cfg, ctx), std::exception);
+    hermit::config cfg;
+    hermit::context ctx;
+    EXPECT_THROW(hermit::parser::parse("{{ 1 ? 2 }}", cfg, ctx), std::exception);
 }
 

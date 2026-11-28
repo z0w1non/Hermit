@@ -1,10 +1,10 @@
 #ifndef HERMIT_HPP
 #define HERMIT_HPP
 
-#include "Hermit_public.hpp"
-#include "Hermit_legacy.hpp"
+#include "public.hpp"
+#include "legacy.hpp"
 
-namespace Hermit
+namespace hermit
 {
 } // namespace Hermit
 

@@ -11,8 +11,8 @@
 
 #include <gmock/gmock.h>
 
-#include "Hermit_llm.hpp"
-#include "Hermit_tcp.hpp"
+#include "llm.hpp"
+#include "tcp.hpp"
 
 struct commandline_args
 {
@@ -51,7 +51,7 @@ private:
     std::streambuf* old_buf_;
 };
 
-class MockLlmBackendParameters : public Hermit::llm_backend_parameters
+class MockLlmBackendParameters : public hermit::LlmBackendParameters
 {
 public:
     MOCK_METHOD(nlohmann::json, get_request_for_completions, (std::string_view, int), (const, override));
@@ -69,7 +69,7 @@ class MockHttpTransport
 public:
     MOCK_METHOD(MockHttpTransport&, expires_after, (std::chrono::seconds), ());
     MOCK_METHOD(void, connect, (std::string_view, std::string_view), ());
-    MOCK_METHOD(Hermit::tcp::response_type, request, (const Hermit::tcp::request_type&), ());
+    MOCK_METHOD(hermit::tcp::response_type, request, (const hermit::tcp::request_type&), ());
 };
 
 #endif
