@@ -16,12 +16,13 @@ namespace hermit
     enum class CommandMode
     {
         kTg, kKc, kLmStudio, kLlamaCpp, kVllm, kOllama, kSd, kSb, kCu, kListModels, kListRunningModels, kShowModel, kGetOllamaVersion,
-        kManageOllamaModel, kManageLmStudioModel, kCreateLmStudioChat, kCreateLmStudioResponse, kCreateLmStudioDecision,
+        kManageOllamaModel, kManageLmStudioModel, kListTgOpenAiModels, kCreateLmStudioChat, kCreateLmStudioResponse, kCreateLmStudioDecision,
         kCreateLmStudioMessages, kCreateLmStudioSystemone, kCreateVllmBatchChat, kCreateTgModerations, kCheckTgHealth,
-        kGetTgModelInfo, kManageTgModel, kStopTgGeneration, kGetTgLogits, kCreateTgChatPrompt,
+        kGetTgModelInfo, kManageTgModel, kStopTgGeneration, kGetTgLogits, kCreateTgChatPrompt, kGetKcInfo,
         kListTgLoras, kManageTgLoras,
-        kManageComfyuiApi, kManageSdApi, kRequestSdApi, kRequestLlmApi,
-        kCreateEmbeddings, kTokenize, kDetokenize,
+        kManageComfyuiApi, kManageSdApi, kRequestSdApi, kRequestLlmApi, kStreamLlmApi,
+        kCreateEmbeddings, kTokenize, kDetokenize, kConvertKcJsonToGrammar,
+        kStreamKcGeneration, kCheckKcGeneration, kAbortKcGeneration, kGetKcLogprobs,
         kExtractPngParameters, kCreateProcess, kTerminateProcess
     };
 

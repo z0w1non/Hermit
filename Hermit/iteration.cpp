@@ -273,15 +273,20 @@ namespace hermit
                 || cfg.command_mode == CommandMode::kCreateTgModerations
                 || cfg.command_mode == CommandMode::kCheckTgHealth
                 || cfg.command_mode == CommandMode::kGetTgModelInfo
+                || cfg.command_mode == CommandMode::kGetKcInfo
                 || cfg.command_mode == CommandMode::kManageTgModel
                 || cfg.command_mode == CommandMode::kStopTgGeneration
                 || cfg.command_mode == CommandMode::kGetTgLogits
                 || cfg.command_mode == CommandMode::kCreateTgChatPrompt
                 || cfg.command_mode == CommandMode::kListTgLoras
                 || cfg.command_mode == CommandMode::kManageTgLoras
-                || cfg.command_mode == CommandMode::kRequestLlmApi
+                || cfg.command_mode == CommandMode::kRequestLlmApi || cfg.command_mode == CommandMode::kStreamLlmApi
                 || cfg.command_mode == CommandMode::kCreateEmbeddings
-                || cfg.command_mode == CommandMode::kTokenize || cfg.command_mode == CommandMode::kDetokenize)
+                || cfg.command_mode == CommandMode::kTokenize || cfg.command_mode == CommandMode::kDetokenize
+                || cfg.command_mode == CommandMode::kConvertKcJsonToGrammar
+                || cfg.command_mode == CommandMode::kStreamKcGeneration
+                || cfg.command_mode == CommandMode::kCheckKcGeneration || cfg.command_mode == CommandMode::kAbortKcGeneration
+                || cfg.command_mode == CommandMode::kGetKcLogprobs)
             {
                 if (cfg.command_mode == CommandMode::kManageComfyuiApi && cfg.cu.api_action == "events")
                 {
@@ -302,6 +307,28 @@ namespace hermit
                         transport.expires_after(std::chrono::seconds{ cfg.timeout_connect }).connect(host, port);
                         return transport.expires_after(std::chrono::seconds{ cfg.timeout_request }).stream_request(request, handler);
                     }) };
+                if (cfg.command_mode == CommandMode::kStreamKcGeneration)
+                {
+                    const public_api::http_stream_handler writer{ [](std::string_view chunk)
+                    {
+                        boost::nowide::cout.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+                        boost::nowide::cout.flush();
+                        return true;
+                    } };
+                    llm::stream_kc_generation(cfg, stream_executor, writer);
+                    return 0;
+                }
+                if (cfg.command_mode == CommandMode::kStreamLlmApi)
+                {
+                    const public_api::http_stream_handler writer{ [](std::string_view chunk)
+                    {
+                        boost::nowide::cout.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+                        boost::nowide::cout.flush();
+                        return true;
+                    } };
+                    llm::StreamApiRequest(cfg, stream_executor, writer);
+                    return 0;
+                }
                 if (cfg.command_mode == CommandMode::kRequestSdApi)
                 {
                     const public_api::http_response_data response{ sd::make_api_request(cfg, executor) };
@@ -347,7 +374,8 @@ namespace hermit
                     if (!response.empty()) boost::nowide::cout << response << '\n' << std::flush;
                     return 0;
                 }
-                const std::string response{ cfg.command_mode == CommandMode::kListModels ? llm::list_models(cfg, executor)
+                const std::string response{ cfg.command_mode == CommandMode::kListTgOpenAiModels ? llm::list_tg_openai_models(cfg, executor)
+                    : cfg.command_mode == CommandMode::kListModels ? llm::list_models(cfg, executor)
                     : cfg.command_mode == CommandMode::kListRunningModels ? llm::list_running_models(cfg, executor)
                     : cfg.command_mode == CommandMode::kGetOllamaVersion ? llm::get_ollama_version(cfg, executor)
                     : cfg.command_mode == CommandMode::kShowModel ? llm::show_model(cfg, executor)
@@ -362,6 +390,7 @@ namespace hermit
                     : cfg.command_mode == CommandMode::kCreateTgModerations ? llm::create_tg_moderations(cfg, executor)
                     : cfg.command_mode == CommandMode::kCheckTgHealth ? llm::check_tg_health(cfg, executor)
                     : cfg.command_mode == CommandMode::kGetTgModelInfo ? llm::get_tg_model_info(cfg, executor)
+                    : cfg.command_mode == CommandMode::kGetKcInfo ? llm::get_kc_info(cfg, executor)
                     : cfg.command_mode == CommandMode::kManageTgModel ? llm::manage_tg_model(cfg, executor)
                     : cfg.command_mode == CommandMode::kStopTgGeneration ? llm::stop_tg_generation(cfg, executor)
                     : cfg.command_mode == CommandMode::kGetTgLogits ? llm::get_tg_logits(cfg, executor)
@@ -373,7 +402,10 @@ namespace hermit
                     : cfg.command_mode == CommandMode::kCreateEmbeddings ? llm::create_embeddings(cfg, executor)
                     : cfg.command_mode == CommandMode::kTokenize ? (cfg.llm.backend_name == "tg"
                         ? llm::encode_tg_tokens(cfg, executor) : llm::tokenize(cfg, executor))
-                    : cfg.llm.backend_name == "tg" ? llm::decode_tg_tokens(cfg, executor) : llm::detokenize(cfg, executor) };
+                    : cfg.command_mode == CommandMode::kDetokenize ? (cfg.llm.backend_name == "tg"
+                        ? llm::decode_tg_tokens(cfg, executor) : llm::detokenize(cfg, executor))
+                    : cfg.command_mode == CommandMode::kConvertKcJsonToGrammar ? llm::convert_kc_json_to_grammar(cfg, executor)
+                    : llm::manage_kc_generation(cfg, executor) };
                 if ((cfg.command_mode == CommandMode::kManageComfyuiApi && cu::api_returns_binary(cfg.cu))
                     || (cfg.command_mode == CommandMode::kManageSdApi && cfg.sd.api_action == "sysinfo-download"))
                 {

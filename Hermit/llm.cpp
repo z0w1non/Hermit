@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <utility>
@@ -60,6 +61,60 @@ namespace hermit
                         "Text Generation Web UI model list response must contain string model_names" });
                 }
             }
+            return response.body;
+        }
+
+        std::string list_tg_openai_models(const config& cfg, const public_api::http_executor& executor)
+        {
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/models", {}, std::move(options)) };
+            request.method = public_api::http_method::get;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || response_json.value("object", std::string{}) != "list"
+                || !response_json.contains("data") || !response_json.at("data").is_array()
+                || !std::all_of(response_json.at("data").begin(), response_json.at("data").end(), [](const nlohmann::json& model)
+                {
+                    return model.is_object() && model.contains("id") && model.at("id").is_string()
+                        && model.contains("object") && model.at("object").is_string()
+                        && model.contains("created") && model.at("created").is_number()
+                        && model.contains("owned_by") && model.at("owned_by").is_string();
+                }))
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI OpenAI model list response must contain a list object with valid model data" });
+            }
+            return response.body;
+        }
+
+        std::string get_kc_info(const config& cfg, const public_api::http_executor& executor)
+        {
+            static const std::map<std::string, std::string> targets{
+                { "info", "/api/extra/version" }, { "model", "/api/v1/model" },
+                { "max-length", "/api/v1/config/max_length" }, { "max-context-length", "/api/v1/config/max_context_length" },
+                { "soft-prompt", "/api/v1/config/soft_prompt" }, { "soft-prompts-list", "/api/v1/config/soft_prompts_list" },
+                { "version", "/api/v1/info/version" }, { "true-max-context-length", "/api/extra/true_max_context_length" },
+                { "performance", "/api/extra/perf" }, { "preloadstory", "/api/extra/preloadstory" }
+            };
+            const auto target{ targets.find(cfg.llm.model_action) };
+            if (target == targets.end())
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{ "Unsupported KoboldCpp info action" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, target->second, {}, std::move(options)) };
+            request.method = public_api::http_method::get;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
             return response.body;
         }
 
@@ -445,13 +500,14 @@ namespace hermit
         std::string create_lmstudio_messages(const config& cfg, const public_api::http_executor& executor)
         {
             const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
-            if (!body.is_object() || !body.contains("model") || !body.at("model").is_string()
-                || body.at("model").get<std::string>().empty() || !body.contains("max_tokens")
+            const bool requires_model{ cfg.llm.backend_name != "tg" };
+            if (!body.is_object() || (requires_model && (!body.contains("model") || !body.at("model").is_string()
+                || body.at("model").get<std::string>().empty())) || !body.contains("max_tokens")
                 || !body.at("max_tokens").is_number_integer() || body.at("max_tokens").get<std::int64_t>() <= 0
                 || !body.contains("messages") || !body.at("messages").is_array() || body.at("messages").empty())
             {
                 hermit::throw_exception(command_line_exception{} << error_info::description{
-                    "LM Studio Anthropic Messages requires model, positive max_tokens, and a non-empty messages array" });
+                    "Anthropic Messages requires positive max_tokens and a non-empty messages array; model is required by this backend" });
             }
             for (const nlohmann::json& message : body.at("messages"))
             {
@@ -460,13 +516,13 @@ namespace hermit
                     || !message.contains("content") || (!message.at("content").is_string() && !message.at("content").is_array()))
                 {
                     hermit::throw_exception(command_line_exception{} << error_info::description{
-                        "LM Studio Anthropic Messages entries require user/assistant role and string or array content" });
+                        "Anthropic Messages entries require user/assistant role and string or array content" });
                 }
             }
             if (body.contains("stream") && !body.at("stream").is_boolean())
             {
                 hermit::throw_exception(command_line_exception{} << error_info::description{
-                    "LM Studio Anthropic Messages stream must be a boolean" });
+                        "Anthropic Messages stream must be a boolean" });
             }
             if (body.value("stream", false))
             {
@@ -499,13 +555,14 @@ namespace hermit
             const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
             if (body.is_object() && body.contains("stream") && body.at("stream").is_boolean() && body.at("stream").get<bool>())
             {
-                if (!body.contains("model") || !body.at("model").is_string() || body.at("model").get<std::string>().empty()
+                if ((cfg.llm.backend_name != "tg" && (!body.contains("model") || !body.at("model").is_string()
+                    || body.at("model").get<std::string>().empty()))
                     || !body.contains("max_tokens") || !body.at("max_tokens").is_number_integer()
                     || body.at("max_tokens").get<std::int64_t>() <= 0 || !body.contains("messages")
                     || !body.at("messages").is_array() || body.at("messages").empty())
                 {
                     hermit::throw_exception(command_line_exception{} << error_info::description{
-                        "LM Studio Anthropic Messages streaming requires model, positive max_tokens, and messages" });
+                        "Anthropic Messages streaming requires positive max_tokens and messages; model is required by this backend" });
                 }
                 if (!stream_executor || !handler) throw std::invalid_argument{ "Anthropic Messages stream executor and handler are required" };
                 public_api::http_transport_options options;
@@ -982,8 +1039,7 @@ namespace hermit
             });
         }
 
-        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor,
-            const filesystem::file_reader& reader)
+        static public_api::http_request_data BuildApiRequestData(const config& cfg, const filesystem::file_reader& reader)
         {
             using public_api::http_method;
             http_method method;
@@ -1084,14 +1140,35 @@ namespace hermit
                     request.headers.emplace(name, header_value);
                 }
             }
+            return request;
+        }
+
+        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor,
+            const filesystem::file_reader& reader)
+        {
+            const public_api::http_request_data request{ BuildApiRequestData(cfg, reader) };
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
             return response;
         }
 
+        public_api::http_stream_response_data StreamApiRequest(const config& cfg,
+            const public_api::http_stream_executor& executor, const public_api::http_stream_handler& handler)
+        {
+            if (!executor || !handler) throw std::invalid_argument{ "backend-api stream executor and handler are required" };
+            const filesystem::file_reader reader{ [](const std::filesystem::path& path, std::ios_base::openmode mode)
+            {
+                return filesystem::read_file_to_string(path, mode);
+            } };
+            const public_api::http_request_data request{ BuildApiRequestData(cfg, reader) };
+            const public_api::http_stream_response_data response{ executor(request, handler) };
+            public_api::ensure_success({ response.status_code, {}, response.content_type, false });
+            return response;
+        }
+
         std::string create_embeddings(const config& cfg, const public_api::http_executor& executor)
         {
-            if (cfg.llm.model.empty())
+            if (cfg.llm.model.empty() && cfg.llm.backend_name != "tg")
             {
                 hermit::throw_exception(command_line_exception{} << error_info::description{ "embeddings create requires --llm.model" });
             }
@@ -1100,11 +1177,8 @@ namespace hermit
             if (!cfg.llm.embedding_inputs.empty()) input = nlohmann::json::array();
             for (const std::string& text : cfg.llm.embedding_inputs) input.push_back(text);
 
-            nlohmann::json body
-            {
-                { "input", std::move(input) },
-                { "model", cfg.llm.model }
-            };
+            nlohmann::json body{ { "input", std::move(input) } };
+            if (!cfg.llm.model.empty()) body["model"] = cfg.llm.model;
             if (cfg.llm.backend_name != "ollama")
             {
                 body["encoding_format"] = "float";
@@ -1134,14 +1208,16 @@ namespace hermit
 
         std::string tokenize(const config& cfg, const public_api::http_executor& executor)
         {
-            nlohmann::json body{ { "content", cfg.llm.prompt } };
+            const bool is_kc{ cfg.llm.backend_name == "kc" };
+            nlohmann::json body{ { is_kc ? "prompt" : "content", cfg.llm.prompt } };
             if (!cfg.llm.tokenize_options.empty())
             {
                 const nlohmann::json extra_options{ nlohmann::json::parse(cfg.llm.tokenize_options) };
-                if (!extra_options.is_object() || extra_options.contains("content"))
+                if (!extra_options.is_object() || extra_options.contains(is_kc ? "prompt" : "content"))
                 {
                     hermit::throw_exception(command_line_exception{} << error_info::description{
-                        "--llm.tokenize-options must be a JSON object without the reserved content field" });
+                        is_kc ? "--llm-tokenize-options must be a JSON object without the reserved prompt field"
+                            : "--llm-tokenize-options must be a JSON object without the reserved content field" });
                 }
                 body.update(extra_options);
             }
@@ -1149,24 +1225,146 @@ namespace hermit
             options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
             options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
             if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            const std::string target{ is_kc && cfg.llm.tokenize_target.empty() ? "/api/extra/tokenize" : cfg.llm.tokenize_target };
             const public_api::http_request_data request{ public_api::make_http_request_data(
-                cfg.llm.host, cfg.llm.port, cfg.llm.tokenize_target, body.dump(), std::move(options)) };
+                cfg.llm.host, cfg.llm.port, target, body.dump(), std::move(options)) };
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
+            if (is_kc)
+            {
+                const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+                if (!response_json.is_object() || !response_json.contains("value") || !response_json.at("value").is_number()
+                    || !response_json.contains("tokens") || !response_json.at("tokens").is_array()
+                    || !std::all_of(response_json.at("tokens").begin(), response_json.at("tokens").end(),
+                        [](const nlohmann::json& token) { return token.is_number_integer(); }))
+                {
+                    hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "KoboldCpp tokenize response must contain numeric value and integer tokens" });
+                }
+            }
             return response.body;
         }
 
         std::string detokenize(const config& cfg, const public_api::http_executor& executor)
         {
-            const nlohmann::json body{ { "tokens", cfg.llm.token_ids } };
+            const bool is_kc{ cfg.llm.backend_name == "kc" };
+            const nlohmann::json body{ { is_kc ? "ids" : "tokens", cfg.llm.token_ids } };
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            const std::string target{ is_kc && cfg.llm.detokenize_target.empty() ? "/api/extra/detokenize" : cfg.llm.detokenize_target };
+            const public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, target, body.dump(), std::move(options)) };
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            if (is_kc)
+            {
+                const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+                if (!response_json.is_object() || !response_json.contains("result") || !response_json.at("result").is_string()
+                    || !response_json.contains("success") || !response_json.at("success").is_boolean())
+                {
+                    hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "KoboldCpp detokenize response must contain string result and boolean success" });
+                }
+            }
+            return response.body;
+        }
+
+        std::string convert_kc_json_to_grammar(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.json_to_grammar_options) };
+            if (!body.is_object() || !body.contains("schema") || !body.at("schema").is_object())
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "--llm-json-to-grammar-options must be an object containing a schema object" });
+            }
             public_api::http_transport_options options;
             options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
             options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
             if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
             const public_api::http_request_data request{ public_api::make_http_request_data(
-                cfg.llm.host, cfg.llm.port, cfg.llm.detokenize_target, body.dump(), std::move(options)) };
+                cfg.llm.host, cfg.llm.port, "/api/extra/json_to_grammar", body.dump(), std::move(options)) };
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("grammar") || !response_json.at("grammar").is_string())
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "KoboldCpp JSON-to-grammar response must contain string grammar" });
+            }
+            return response.body;
+        }
+
+        public_api::http_stream_response_data stream_kc_generation(const config& cfg,
+            const public_api::http_stream_executor& executor, const public_api::http_stream_handler& handler)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("prompt") || !body.at("prompt").is_string())
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "--llm-api-options must be a KoboldCpp generation object containing a string prompt" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/api/extra/generate/stream", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            if (!executor || !handler) throw std::invalid_argument{ "KoboldCpp stream executor and handler are required" };
+            const public_api::http_stream_response_data response{ executor(request, handler) };
+            if (response.status_code < 200 || response.status_code >= 300)
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "KoboldCpp generation stream returned HTTP status " + std::to_string(response.status_code) });
+            }
+            return response;
+        }
+
+        std::string manage_kc_generation(const config& cfg, const public_api::http_executor& executor)
+        {
+            const std::string& action{ cfg.llm.kc_generation_action };
+            const bool has_body{ !cfg.llm.api_options.empty() };
+            nlohmann::json body{ nlohmann::json::object() };
+            if (has_body)
+            {
+                body = nlohmann::json::parse(cfg.llm.api_options);
+                if (!body.is_object() || (body.contains("genkey") && (!body.at("genkey").is_string() || body.at("genkey").get<std::string>().empty())))
+                {
+                    hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "--llm-api-options must be an object with an optional non-empty string genkey" });
+                }
+            }
+            if ((action == "check" || action == "logprobs") && has_body && !body.contains("genkey"))
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "generation check POST requires genkey" });
+            }
+            if (action != "check" && action != "abort" && action != "logprobs")
+            {
+                hermit::throw_exception(command_line_exception{} << error_info::description{ "Unsupported KoboldCpp generation action" });
+            }
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(cfg.llm.host, cfg.llm.port,
+                action == "check" ? "/api/extra/generate/check" : action == "abort" ? "/api/extra/abort" : "/api/extra/last_logprobs",
+                has_body ? body.dump() : std::string{}, std::move(options)) };
+            request.method = (action == "check" || action == "logprobs") && !has_body
+                ? public_api::http_method::get : public_api::http_method::post;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            if (action == "abort")
+            {
+                const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+                if (!response_json.is_object() || !response_json.contains("success") || !response_json.at("success").is_string())
+                {
+                    hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "KoboldCpp abort response must contain string success" });
+                }
+            }
             return response.body;
         }
 

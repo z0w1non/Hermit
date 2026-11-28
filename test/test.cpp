@@ -266,6 +266,26 @@ TEST(parse_command_line, configures_model_list_routes_for_local_llm_backends)
     EXPECT_EQ(tg_cfg.llm.admin_api_key, "admin-token");
 }
 
+TEST(parse_command_line, configures_textgen_openai_model_list)
+{
+    commandline_args args{ "Hermit.exe", "models", "openai-list", "--backend", "tg", "--llm-api-key", "api-token" };
+    hermit::config cfg;
+    EXPECT_EQ(hermit::command_line::parse(args.argc(), args.argv(), cfg), hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, hermit::CommandMode::kListTgOpenAiModels);
+    EXPECT_EQ(cfg.llm.port, "5000");
+    EXPECT_EQ(cfg.llm.api_key, "api-token");
+}
+
+TEST(parse_command_line, configures_textgen_embeddings)
+{
+    commandline_args args{ "Hermit.exe", "embeddings", "create", "--backend", "tg" };
+    hermit::config cfg;
+    EXPECT_EQ(hermit::command_line::parse(args.argc(), args.argv(), cfg), hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, hermit::CommandMode::kCreateEmbeddings);
+    EXPECT_EQ(cfg.llm.port, "5000");
+    EXPECT_EQ(cfg.llm.embedding_target, "/v1/embeddings");
+}
+
 TEST(parse_command_line, configures_ollama_model_details_and_running_models)
 {
     commandline_args show_args{ "Hermit.exe", "models", "show", "--backend", "ollama", "--llm-model", "gemma4",
@@ -374,7 +394,7 @@ TEST(parse_command_line, configures_lmstudio_decisions_create)
 TEST(parse_command_line, configures_lmstudio_anthropic_messages_create)
 {
     commandline_args args{ "Hermit.exe", "messages", "create", "--backend", "lmstudio",
-        "--llm-api-options", R"({"model":"test-model","max_tokens":32,"messages":[{"role":"user","content":"hello"}]})" };
+        "--llm-api-options", R"({"max_tokens":32,"messages":[{"role":"user","content":"hello"}]})" };
     hermit::config cfg;
     EXPECT_EQ(hermit::command_line::parse(args.argc(), args.argv(), cfg), hermit::command_line::parse_result::success);
     EXPECT_EQ(cfg.command_mode, hermit::CommandMode::kCreateLmStudioMessages);
@@ -384,6 +404,14 @@ TEST(parse_command_line, configures_lmstudio_anthropic_messages_create)
     hermit::config unsupported_cfg;
     EXPECT_EQ(hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
         hermit::command_line::parse_result::program_options_error);
+
+    commandline_args tg_args{ "Hermit.exe", "messages", "create", "--backend", "tg", "--llm-api-key", "anthropic-token",
+        "--llm-api-options", R"({"model":"test-model","max_tokens":32,"messages":[{"role":"user","content":"hello"}]})" };
+    hermit::config tg_cfg;
+    EXPECT_EQ(hermit::command_line::parse(tg_args.argc(), tg_args.argv(), tg_cfg), hermit::command_line::parse_result::success);
+    EXPECT_EQ(tg_cfg.command_mode, hermit::CommandMode::kCreateLmStudioMessages);
+    EXPECT_EQ(tg_cfg.llm.backend_name, "tg");
+    EXPECT_EQ(tg_cfg.llm.port, "5000");
 }
 
 TEST(parse_command_line, configures_lmstudio_systemone_create)
@@ -482,6 +510,45 @@ TEST(parse_command_line, configures_tg_model_info)
     hermit::config unsupported_cfg;
     EXPECT_EQ(hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
         hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_koboldcpp_model_and_runtime_info)
+{
+    const std::vector<std::string> actions{
+        "info", "model", "max-length", "max-context-length", "soft-prompt", "soft-prompts-list",
+        "version", "true-max-context-length", "performance", "preloadstory"
+    };
+    for (const std::string& action : actions)
+    {
+        commandline_args args{ "Hermit.exe", "models", action, "--backend", "kc" };
+        hermit::config cfg;
+        EXPECT_EQ(hermit::command_line::parse(args.argc(), args.argv(), cfg), hermit::command_line::parse_result::success) << action;
+        EXPECT_EQ(cfg.command_mode, hermit::CommandMode::kGetKcInfo) << action;
+        EXPECT_EQ(cfg.llm.backend_name, "kc");
+        EXPECT_EQ(cfg.llm.port, "5001");
+        EXPECT_EQ(cfg.llm.model_action, action);
+    }
+}
+
+TEST(parse_command_line, configures_koboldcpp_stream_check_and_abort)
+{
+    const std::vector<std::string> stream_args{ "Hermit.exe", "generation", "stream", "--backend", "kc",
+        "--llm-api-options", R"({"prompt":"hello","genkey":"request-1"})" };
+    commandline_args stream{ stream_args };
+    hermit::config stream_cfg;
+    EXPECT_EQ(hermit::command_line::parse(stream.argc(), stream.argv(), stream_cfg), hermit::command_line::parse_result::success);
+    EXPECT_EQ(stream_cfg.command_mode, hermit::CommandMode::kStreamKcGeneration);
+    EXPECT_EQ(stream_cfg.llm.port, "5001");
+
+    for (const std::string action : { "check", "abort", "logprobs" })
+    {
+        commandline_args args{ "Hermit.exe", "generation", action, "--backend", "kc", "--llm-api-options", R"({"genkey":"request-1"})" };
+        hermit::config cfg;
+        EXPECT_EQ(hermit::command_line::parse(args.argc(), args.argv(), cfg), hermit::command_line::parse_result::success);
+        EXPECT_EQ(cfg.command_mode, action == "check" ? hermit::CommandMode::kCheckKcGeneration
+            : action == "abort" ? hermit::CommandMode::kAbortKcGeneration : hermit::CommandMode::kGetKcLogprobs);
+        EXPECT_EQ(cfg.llm.port, "5001");
+    }
 }
 
 TEST(parse_command_line, configures_tg_model_load_and_unload)
@@ -622,6 +689,25 @@ TEST(parse_command_line, configures_generic_llm_backend_api_request)
     commandline_args unsupported{ "Hermit.exe", "backend-api", "request", "--backend", "sd" };
     hermit::config unsupported_cfg;
     EXPECT_EQ(hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg), hermit::command_line::parse_result::program_options_error);
+
+    commandline_args koboldcpp{ "Hermit.exe", "backend-api", "request", "--backend", "kc", "--llm-api-method", "POST",
+        "--llm-api-path", "/api/extra/websearch", "--llm-api-options", R"({"q":"local inference"})" };
+    hermit::config koboldcpp_cfg;
+    EXPECT_EQ(hermit::command_line::parse(koboldcpp.argc(), koboldcpp.argv(), koboldcpp_cfg),
+        hermit::command_line::parse_result::success);
+    EXPECT_EQ(koboldcpp_cfg.command_mode, hermit::CommandMode::kRequestLlmApi);
+    EXPECT_EQ(koboldcpp_cfg.llm.backend_name, "kc");
+    EXPECT_EQ(koboldcpp_cfg.llm.port, "5001");
+    EXPECT_EQ(koboldcpp_cfg.llm.api_method, "POST");
+    EXPECT_EQ(koboldcpp_cfg.llm.api_path, "/api/extra/websearch");
+
+    commandline_args tg_stream{ "Hermit.exe", "backend-api", "stream", "--backend", "tg", "--llm-api-method", "POST",
+        "--llm-api-path", "/v1/chat/completions", "--llm-api-options", R"({"model":"loaded","messages":[{"role":"user","content":"hello"}],"stream":true})" };
+    hermit::config tg_stream_cfg;
+    EXPECT_EQ(hermit::command_line::parse(tg_stream.argc(), tg_stream.argv(), tg_stream_cfg), hermit::command_line::parse_result::success);
+    EXPECT_EQ(tg_stream_cfg.command_mode, hermit::CommandMode::kStreamLlmApi);
+    EXPECT_EQ(tg_stream_cfg.llm.backend_name, "tg");
+    EXPECT_EQ(tg_stream_cfg.llm.port, "5000");
 }
 
 TEST(parse_command_line, configures_comfyui_queue_and_control_operations)
@@ -785,7 +871,7 @@ TEST(parse_command_line, requires_model_and_rejects_unsupported_embedding_backen
     hermit::config missing_model_cfg;
     EXPECT_EQ(hermit::command_line::parse(missing_model.argc(), missing_model.argv(), missing_model_cfg), hermit::command_line::parse_result::program_options_error);
 
-    commandline_args unsupported_backend{ "Hermit.exe", "embeddings", "create", "--backend", "tg", "--llm-model", "embed-model" };
+    commandline_args unsupported_backend{ "Hermit.exe", "embeddings", "create", "--backend", "sd", "--llm-model", "embed-model" };
     hermit::config unsupported_backend_cfg;
     EXPECT_EQ(hermit::command_line::parse(unsupported_backend.argc(), unsupported_backend.argv(), unsupported_backend_cfg), hermit::command_line::parse_result::program_options_error);
 }
@@ -830,6 +916,29 @@ TEST(parse_command_line, configures_llama_cpp_tokenize_and_detokenize)
     EXPECT_EQ(tg_decode_cfg.llm.port, "5000");
     EXPECT_EQ(tg_decode_cfg.llm.backend_name, "tg");
     EXPECT_EQ(tg_decode_cfg.command_mode, hermit::CommandMode::kDetokenize);
+
+    commandline_args kc_encode_args{ "Hermit.exe", "tokenize", "encode", "--backend", "kc", "--llm-prompt", "hello" };
+    hermit::config kc_encode_cfg;
+    EXPECT_EQ(hermit::command_line::parse(kc_encode_args.argc(), kc_encode_args.argv(), kc_encode_cfg),
+        hermit::command_line::parse_result::success);
+    EXPECT_EQ(kc_encode_cfg.command_mode, hermit::CommandMode::kTokenize);
+    EXPECT_EQ(kc_encode_cfg.llm.port, "5001");
+    EXPECT_EQ(kc_encode_cfg.llm.tokenize_target, "/api/extra/tokenize");
+
+    commandline_args kc_decode_args{ "Hermit.exe", "tokenize", "decode", "--backend", "kc", "--llm-token-ids", "3", "4" };
+    hermit::config kc_decode_cfg;
+    EXPECT_EQ(hermit::command_line::parse(kc_decode_args.argc(), kc_decode_args.argv(), kc_decode_cfg),
+        hermit::command_line::parse_result::success);
+    EXPECT_EQ(kc_decode_cfg.command_mode, hermit::CommandMode::kDetokenize);
+    EXPECT_EQ(kc_decode_cfg.llm.detokenize_target, "/api/extra/detokenize");
+
+    commandline_args grammar_args{ "Hermit.exe", "grammar", "convert", "--backend", "kc", "--llm-json-to-grammar-options",
+        R"({"schema":{"type":"object"}})" };
+    hermit::config grammar_cfg;
+    EXPECT_EQ(hermit::command_line::parse(grammar_args.argc(), grammar_args.argv(), grammar_cfg),
+        hermit::command_line::parse_result::success);
+    EXPECT_EQ(grammar_cfg.command_mode, hermit::CommandMode::kConvertKcJsonToGrammar);
+    EXPECT_EQ(grammar_cfg.llm.port, "5001");
 
     commandline_args unsupported_args{ "Hermit.exe", "tokenize", "encode", "--backend", "ollama" };
     hermit::config unsupported_cfg;

@@ -1,6 +1,7 @@
 #include <chrono>
 #include <array>
 #include <exception>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
@@ -8,7 +9,9 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <boost/exception/diagnostic_information.hpp>
 #include <boost/asio/write.hpp>
+#include <nlohmann/json.hpp>
 
 #include "tcp.hpp"
 #include "errors.hpp"
@@ -124,7 +127,7 @@ TEST(public_http_adapter, classifies_binary_and_json_response_content_types)
         hermit::tcp::response_type response{ boost::beast::http::status::ok, 3 };
         response.body() = "raw";
         response.set(boost::beast::http::field::content_type,
-            request.target() == "/binary" ? "application/pdf" : "application/vnd.example+json; charset=utf-8");
+            request.target() == "/binary" ? "audio/wav" : "application/vnd.example+json; charset=utf-8");
         response.prepare_payload();
         return response;
     } };
@@ -189,34 +192,53 @@ TEST(tcp, delivers_http_response_body_incrementally_to_stream_handler)
     };
     const std::string port{ std::to_string(acceptor.local_endpoint().port()) };
     const std::string body{ "event: response.created\ndata: {}\n\nevent: response.completed\ndata: {}\n\n" };
-    std::exception_ptr server_error;
-    std::thread server{ [&acceptor, &body, &server_error]
+    std::string received_request_body;
+    std::string server_error;
+    std::promise<void> client_finished;
+    std::future<void> client_finished_future{ client_finished.get_future() };
+    std::thread server{ [&acceptor, &body, &received_request_body, &server_error,
+        client_finished_future = std::move(client_finished_future)]() mutable
     {
         try
         {
             boost::asio::ip::tcp::socket socket{ acceptor.get_executor() };
             acceptor.accept(socket);
-            std::array<char, 4096> request{};
-            static_cast<void>(socket.read_some(boost::asio::buffer(request)));
+            boost::beast::flat_buffer request_buffer;
+            boost::beast::http::request<boost::beast::http::string_body> request;
+            boost::beast::http::read(socket, request_buffer, request);
+            received_request_body = request.body();
             const std::string header{ "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: "
                 + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" };
             boost::asio::write(socket, boost::asio::buffer(header));
             boost::asio::write(socket, boost::asio::buffer(body));
+            client_finished_future.wait();
+        }
+        catch (const boost::exception& error)
+        {
+            server_error = boost::diagnostic_information(error);
+        }
+        catch (const std::exception& error)
+        {
+            server_error = error.what();
         }
         catch (...)
         {
-            server_error = std::current_exception();
+            server_error = boost::current_exception_diagnostic_information();
         }
     } };
 
+    const std::string user_query{ "Please verify this streamed response request." };
+    const std::string request_body{ nlohmann::json{
+        { "model", "test-model" }, { "input", user_query }, { "stream", true }
+    }.dump() };
     hermit::tcp transport;
     transport.expires_after(std::chrono::seconds{ 2 }).connect("127.0.0.1", port);
-    hermit::tcp::request_type request{ hermit::tcp::make_post_json_request("localhost", "/v1/responses", "{}") };
+    hermit::tcp::request_type request{ hermit::tcp::make_post_json_request("localhost", "/v1/responses", request_body) };
     request.prepare_payload();
     std::string received;
     std::size_t callback_count{};
     hermit::tcp::stream_response_type response;
-    std::exception_ptr request_error;
+    std::string request_error;
     try
     {
         response = transport.expires_after(std::chrono::seconds{ 2 }).stream_request(
@@ -227,13 +249,23 @@ TEST(tcp, delivers_http_response_body_incrementally_to_stream_handler)
             return true;
         });
     }
+    catch (const boost::exception& error)
+    {
+        request_error = boost::diagnostic_information(error);
+    }
+    catch (const std::exception& error)
+    {
+        request_error = error.what();
+    }
     catch (...)
     {
-        request_error = std::current_exception();
+        request_error = boost::current_exception_diagnostic_information();
     }
+    client_finished.set_value();
     server.join();
-    if (server_error) std::rethrow_exception(server_error);
-    if (request_error) std::rethrow_exception(request_error);
+    ASSERT_TRUE(server_error.empty()) << server_error;
+    ASSERT_TRUE(request_error.empty()) << request_error;
+    EXPECT_EQ(nlohmann::json::parse(received_request_body).at("input"), user_query);
     EXPECT_EQ(response.result_int(), 200);
     EXPECT_EQ(response[boost::beast::http::field::content_type], "text/event-stream");
     EXPECT_EQ(received, body);

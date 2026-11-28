@@ -15,6 +15,8 @@ namespace hermit
         std::string host, port, api_key, admin_api_key, model, backend_name;
         std::string completions_target, token_count_target, chat_completions_target, models_target, embedding_target;
         std::string tokenize_target, detokenize_target, tokenize_options;
+        std::string json_to_grammar_options;
+        std::string kc_generation_action;
         std::string running_models_target, model_info_target, model_info_options;
         std::string model_action, model_action_target, model_action_options;
         std::string api_method, api_path, api_options, api_body_file, api_content_type, api_headers;

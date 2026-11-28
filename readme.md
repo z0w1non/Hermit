@@ -11,7 +11,7 @@ Hermit は、Windows 上で動作する C++20 の CLI アプリケーション�
 - `tg` / `kc`、OpenAI 互換 API を持つ `lmstudio` / `llama-cpp` / `vllm`、Ollama 独自 API の `ollama` でテキストを生成し、Completions または Chat Completions の処理を選択できます。
 - `sd` モードで Stable Diffusion WebUI に txt2img / img2img リクエストを送り、画像を保存できます。
 - `sd-api` コマンドで Stable Diffusion WebUI の progress、interrogate、Extras、options、モデル一覧・更新、embedding/hypernetwork 作成・学習、memory/script/extension 情報、checkpoint 管理、任意 server control API と runtime OpenAPI route inventory を呼び出せます。`sd-api request` は method/path、JSON または file body、Content-Type、追加 header を指定できます。
-- `backend-api request` で `tg`、`kc`、`lmstudio`、`llama-cpp`、`vllm`、`ollama` の HTTP route を直接呼び出せます。method/path と JSON/raw body を指定し、応答 JSON または binary bytes を出力できます。
+- `backend-api request|stream` で `tg`、`kc`、`lmstudio`、`llama-cpp`、`vllm`、`ollama` の HTTP route を直接呼び出せます。method/path と JSON/raw body を指定でき、`stream` は SSE 等の応答 chunk を受信順に標準出力へ転送します。
 - `sb` モードで Style-Bert-VITS2 に音声生成リクエストを送り、音声を保存できます。
 - `cu` モードで ComfyUI の workflow を送信し、画像をアップロードして生成結果を保存できます。
 - `{{...}}` 形式の式をプロンプトや対応するファイルパスで評価できます。ファイル読み込み、テキスト切り詰め、日時、乱数、環境変数、サブプロンプトなどの組み込み機能を利用できます。
@@ -94,11 +94,12 @@ Hermit.exe lmstudio-chat create --backend lmstudio --llm-api-options '{"model":"
 Hermit.exe lmstudio-chat create --backend lmstudio --llm-api-options '{"model":"ibm/granite-4-micro","input":"Continue","previous_response_id":"resp_..."}'
 ```
 
-Anthropic Messages 互換 API は `messages create` で利用できます。API key を設定すると `x-api-key` header で送信します。`stream:true` の場合は Anthropic SSE event をそのまま逐次出力します。
+Anthropic Messages API は `messages create --backend lmstudio|tg` で利用できます。TG の既定 port は 5000、LM Studio は 1234 です。TG は `model` を省略するとロード中の model を使い、LM Studio は model を必須とします。API key は `x-api-key` header で送信します。`stream:true` の場合は Anthropic SSE event をそのまま逐次出力します。
 
 ```powershell
 Hermit.exe messages create --backend lmstudio --llm-api-options '{"model":"ibm/granite-4-micro","max_tokens":128,"messages":[{"role":"user","content":"Hello"}]}'
 Hermit.exe messages create --backend lmstudio --llm-api-options '{"model":"ibm/granite-4-micro","max_tokens":128,"messages":[{"role":"user","content":"Hello"}],"stream":true}'
+Hermit.exe messages create --backend tg --llm-api-key "api-token" --llm-api-options '{"max_tokens":128,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 Jev (TypeSafe AI) System One endpoint は decision model ID と `state`、ID付き `questions` を JSON で指定します。
@@ -158,9 +159,30 @@ Hermit.exe loras unload --backend tg --llm-admin-key "admin-token"
 
 ```powershell
 Hermit.exe backend-api request --backend lmstudio --llm-api-method POST --llm-api-path /v1/responses --llm-api-options '{"model":"openai/gpt-oss-20b","input":"Hello"}'
+Hermit.exe backend-api stream --backend tg --llm-api-method POST --llm-api-path /v1/chat/completions --llm-api-options '{"model":"loaded-model","messages":[{"role":"user","content":"Hello"}],"stream":true}' --llm-api-key "api-token"
 ```
 
-`--llm-api-body-file` で raw/multipart body、`--llm-api-content-type` で Content-Type、`--llm-api-headers` で追加 header を指定できます。JSON/object API 応答はそのまま出力し、binary 応答は bytes を標準出力へ書きます。この共通経路は個別 API の schema 検証や streaming/WebSocket 処理を代替しません。operation inventory は [バックエンド API 対応台帳](docs/BACKEND_WEB_API_COVERAGE.md) を参照してください。
+`--llm-api-body-file` で raw/multipart body、`--llm-api-content-type` で Content-Type、`--llm-api-headers` で追加 header を指定できます。`request` は応答全体を出力し、`stream` は SSE 等の response chunk を受信順に出力します。streamed events は raw のまま転送され、生成テキストや会話履歴へ変換しません。WebSocket は未対応です。operation inventory は [バックエンド API 対応台帳](docs/BACKEND_WEB_API_COVERAGE.md) を参照してください。
+
+Text Generation Web UI の音声 transcription は multipart body に `file` field と音声ファイルを含め、必要なら `language` と Whisper `model` fields を加えます。画像生成には `/v1/images/generations` へ prompt や size 等の JSON body を送ります。
+
+```powershell
+Hermit.exe backend-api request --backend tg --llm-api-method POST --llm-api-path /v1/audio/transcriptions --llm-api-body-file transcription-form.bin --llm-api-content-type 'multipart/form-data; boundary=hermit-boundary' --llm-api-key "api-token"
+Hermit.exe backend-api request --backend tg --llm-api-method POST --llm-api-path /v1/images/generations --llm-api-content-type application/json --llm-api-options '{"prompt":"blue square","size":"512x512","steps":4}' --llm-api-key "api-token"
+```
+
+KoboldCpp の docs・metadata・UI GET route（例 `/api`、`/props`、`/.well-known/serviceinfo`、`/manifest.json`）も `backend-api request --backend kc --llm-api-method GET --llm-api-path <path>` で取得できます。`/ws` は WebSocket 専用で、この HTTP request command では利用できません。
+
+KoboldCpp の legacy `/request` は `{text,max}` を Bearer password 付き POST で送ります。A1111 の schedulers・LoRA・upscaler list は GET で取得できます。
+
+KoboldCpp が公開する route alias も path をそのまま指定できます。例として `/api/latest/generate`、`/completions`、`/chat/completions`、`/responses`、`/messages`、`/api/history` があります。各 alias は対応する canonical route と同じ body・認証条件を使います。
+
+KoboldCpp の A1111 progress/last-result と ComfyUI metadata/model-list GET route も呼び出せます。`/sdapi/v1/progress` は `?skip_current_image=true`、`/sdapi/v1/get_last.json` は必要に応じて `?genkey=<key>` を付けます。ComfyUI-compatible `/system_stats` は upstream が placeholder 値を返す route です。
+
+```powershell
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /request --llm-api-options '{"text":"Hello","max":32}' --llm-api-key "<server-password>"
+Hermit.exe backend-api request --backend kc --llm-api-method GET --llm-api-path /sdapi/v1/schedulers
+```
 
 HTTP API から受け取る応答 body は 128 MiB を上限とし、上限を超える応答は受信エラーになります。
 
@@ -255,9 +277,27 @@ Hermit.exe models list --backend llama-cpp
 Hermit.exe models list --backend vllm --llm-api-key "token"
 Hermit.exe models list --backend ollama
 Hermit.exe models list --backend tg --llm-admin-key "admin-token"
+Hermit.exe models openai-list --backend tg --llm-api-key "api-token"
+Hermit.exe embeddings create --backend tg --llm-prompt "text to embed" --llm-api-key "api-token"
 ```
 
+TG embeddings はサーバー起動時の `OPENEDAI_EMBEDDING_MODEL` / `OPENEDAI_EMBEDDING_DEVICE` でモデルを選ぶため、`--llm-model` は不要です。`--llm-embedding-input` で複数入力を渡せます。
+
 Ollama のモデル詳細、稼働状況、サーバーバージョンは `models show`、`models running`、`models version` で確認できます。
+
+KoboldCpp のモデル名、最大生成長、最大 context 長、バージョンは専用の `models` 操作で確認できます。既定ポートは `5001` です。
+
+```powershell
+Hermit.exe models model --backend kc
+Hermit.exe models max-length --backend kc
+Hermit.exe models max-context-length --backend kc
+Hermit.exe models soft-prompt --backend kc
+Hermit.exe models soft-prompts-list --backend kc
+Hermit.exe models version --backend kc
+Hermit.exe models true-max-context-length --backend kc
+Hermit.exe models performance --backend kc
+Hermit.exe models preloadstory --backend kc
+```
 
 ```powershell
 Hermit.exe models show --backend ollama --llm-model "gemma4" --llm-model-info-options '{"verbose":true}'
@@ -293,7 +333,88 @@ Hermit.exe tokenize encode --backend llama-cpp --llm-prompt "Hello world" --llm-
 Hermit.exe tokenize decode --backend llama-cpp --llm-token-ids 123 456
 Hermit.exe tokenize encode --backend tg --llm-prompt "Hello world"
 Hermit.exe tokenize decode --backend tg --llm-token-ids 123 456
+Hermit.exe tokenize encode --backend kc --llm-prompt "Hello world"
+Hermit.exe tokenize decode --backend kc --llm-token-ids 123 456
 ```
+
+KoboldCpp は `/api/extra/tokenize`、`/api/extra/detokenize` を使います。JSON Schema を GBNF grammar に変換するには、schema object を `--llm-json-to-grammar-options` で渡します。
+
+```powershell
+Hermit.exe grammar convert --backend kc --llm-json-to-grammar-options '{"schema":{"type":"object","properties":{"answer":{"type":"string"}}}}'
+```
+
+KoboldCpp の generation を SSE で受け取る場合は、通常生成と同じ request fields を `--llm-api-options` に指定します。共有 server では `genkey` を含めると check/abort を自分の generation に限定できます。
+
+```powershell
+Hermit.exe generation stream --backend kc --llm-api-options '{"prompt":"Hello","max_length":64,"genkey":"request-1"}'
+Hermit.exe generation check --backend kc --llm-api-options '{"genkey":"request-1"}'
+Hermit.exe generation abort --backend kc --llm-api-options '{"genkey":"request-1"}'
+Hermit.exe generation logprobs --backend kc --llm-api-options '{"genkey":"request-1"}'
+```
+
+`generation logprobs` は `/api/extra/last_logprobs` を読み出します。`genkey` を省略すると最新の generation を、指定するとその request の結果を取得します。generation request 側で `"logprobs": true` を有効にしてください。
+
+KoboldCpp optional API は汎用 `backend-api request` から呼び出せます。以下の route は各機能を有効にした server で利用できます。request JSON は API の field 名をそのまま指定します。
+
+```powershell
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/extra/websearch --llm-api-options '{"q":"local inference"}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/extra/multiplayer/status --llm-api-options '{"senderbusy":false,"sender":"client-1"}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/extra/multiplayer/getstory --llm-api-options '{}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/extra/data/list --llm-api-options '{}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/extra/data/load --llm-api-options '{"slot":1}'
+```
+
+`websearch` には `--websearch`、multiplayer routes には `--multiplayer`、data routes には `--savedatafile` の設定が必要です。Server-side save は共有 server から接続できる利用者が load/overwrite でき、12 slots・各最大10 MBです。
+
+KC の音声認識 `/api/extra/transcribe` は `audio_data` に base64 音声を入れた JSON、または multipart の `file` upload を受け付けます。TTS `/api/extra/tts`、embeddings、music の prepare/generate も汎用 request で呼び出せます。raw/multipart body は `--llm-api-body-file` と `--llm-api-content-type` を指定します。TTS/music の WAV・MP3 応答は binary として標準出力へ書かれるので、保存する場合は redirect を使います。speakers list は GET で取得できます。
+
+XTTS の `/get_tts_settings`、`/set_tts_settings` と legacy `/voice/check`、`/voice/speakers`、`/voice/vits` routes も同じ汎用 request から呼び出せます。設定 route は upstream の stub で、`set_tts_settings` は値を適用しません。
+
+KoboldCpp admin API と MCP も汎用 request で呼び出せます。admin API は `--admin` と admin password、MCP は `--mcpfile` が必要です。通常 password または admin password は `--llm-api-key` で Bearer 認証として送ります。admin password は通常 password の代わりにも使えます。
+
+```powershell
+Hermit.exe backend-api request --backend kc --llm-api-method GET --llm-api-path /api/admin/list_options --llm-api-key "<admin-password>"
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/admin/reload_config --llm-api-options '{"filename":"unload_model"}' --llm-api-key "<admin-password>"
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /mcp --llm-api-options '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' --llm-api-key "<server-password>"
+```
+
+admin の KV state 操作は `check_state`、`save_state`、`load_state`、`clear_state` です。これらの API は呼び出し・応答を汎用転送しますが、state/MCP 固有の schema parsing は行いません。MCP の JSON-RPC メソッドは `initialize`、`tools/list`、`tools/call` です。
+
+```powershell
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/extra/transcribe --llm-api-options '{"audio_data":"<base64 audio>","language":"en"}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /api/extra/tts --llm-api-options '{"text":"Hello","response_format":"mp3"}' > speech.mp3
+Hermit.exe backend-api request --backend kc --llm-api-method GET --llm-api-path /api/extra/speakers_list
+```
+
+使用可能な field とモデル条件は KoboldCpp の版・ロード済み機能で異なります。実行中 server の `/api` docs と公式 [speech-to-text](https://koboldcpp.net/docs/features/speech-to-text/)、[TTS](https://koboldcpp.net/docs/features/text-to-speech/)、[embeddings](https://koboldcpp.net/docs/features/embeddings/)、[music](https://koboldcpp.net/docs/features/music/) を確認してください。
+
+OpenAI 互換 API の audio/images も同じ汎用 request から利用できます。`/v1/audio/*` は audio/TTS model が必要で password 対象ですが、`/v1/images/*` は image model が必要で password 認証されません。image edits の multipart input は raw body file と Content-Type を指定します。
+
+```powershell
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /v1/audio/speech --llm-api-options '{"model":"tts","input":"Hello","response_format":"mp3"}' > speech.mp3
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /v1/images/generations --llm-api-content-type application/json --llm-api-options '{"prompt":"a blue square","response_format":"b64_json"}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /v1/images/edits --llm-api-body-file edit-form.bin --llm-api-content-type 'multipart/form-data; boundary=edit'
+Hermit.exe backend-api request --backend kc --llm-api-method GET --llm-api-path /v1/audio/voices
+```
+
+対応 path・auth・モデル条件は KoboldCpp の [endpoint 一覧](https://koboldcpp.net/docs/api/endpoints/) と [image generation](https://koboldcpp.net/docs/features/image-generation/) を参照してください。専用 schema validator はなく、JSON field はそのまま server へ転送します。
+KoboldCpp は Anthropic Messages と Ollama API も提供します。Anthropic SDK の `x-api-key` は受け付けないため、password を設定した server では generic request の Bearer 認証を使ってください。Ollama emulation を使う場合は KoboldCpp を port `11434` で起動します。Ollama の `generate`/`chat` は既定で NDJSON streaming なので、汎用 request は応答を全受信してから表示し、逐次出力しません。
+
+```powershell
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /v1/messages --llm-api-options '{"model":"koboldcpp/model","max_tokens":128,"messages":[{"role":"user","content":"Hello"}]}' --llm-api-headers '{"anthropic-version":"2023-06-01"}'
+Hermit.exe backend-api request --backend kc --llm-port 11434 --llm-api-method POST --llm-api-path /api/chat --llm-api-options '{"model":"llama3.2","messages":[{"role":"user","content":"Hello"}],"stream":false}'
+```
+
+既存の `--backend ollama` は Hermit の native Ollama operation を使い、KoboldCpp-specific route を選ぶ場合は `--backend kc` と汎用 request を使います。詳しくは KoboldCpp の [API routes](https://koboldcpp.net/docs/api/endpoints/)、[password/auth](https://koboldcpp.net/docs/api/passwords-and-security/)、[streaming](https://koboldcpp.net/docs/api/streaming/) を参照してください。
+KoboldCpp の A1111/Forge・ComfyUI・XTTS 互換 route も `backend-api request --backend kc` から呼び出せます。これらの image route と XTTS `/tts_to_audio` は通常 password では保護されません。`/view` や XTTS の音声応答は binary bytes のため redirect で保存してください。Hermit の `sd-api` と `comfy` 専用 command はそれぞれ別の SD/ComfyUI server に接続します。
+
+```powershell
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /sdapi/v1/txt2img --llm-api-options '{"prompt":"blue square","steps":2}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /prompt --llm-api-options '{"prompt":{"1":{"class_type":"EmptyLatentImage","inputs":{"width":512,"height":512}}}}'
+Hermit.exe backend-api request --backend kc --llm-api-method POST --llm-api-path /tts_to_audio --llm-api-options '{"text":"Hello","speaker_id":"speaker-1","language":"en"}' > voice.wav
+Hermit.exe backend-api request --backend kc --llm-api-method GET --llm-api-path '/view?filename=image.png&type=output' > image.png
+```
+
 
 ### AUTOMATIC1111 Stable Diffusion WebUI (`sd`)
 

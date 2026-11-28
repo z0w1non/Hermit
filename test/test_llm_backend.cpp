@@ -1,4 +1,5 @@
 #include <chrono>
+#include <tuple>
 
 #include <gtest/gtest.h>
 
@@ -46,6 +47,49 @@ TEST(llm_backend_parameters, lists_models_with_get_auth_and_timeout_options)
     } };
 
     EXPECT_EQ(hermit::llm::list_models(cfg, executor), R"({"models":[]})");
+}
+
+TEST(llm_backend_parameters, queries_koboldcpp_model_configuration_and_version)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "secret";
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 9;
+    const std::vector<std::pair<std::string, std::string>> actions{
+        { "info", "/api/extra/version" }, { "model", "/api/v1/model" },
+        { "max-length", "/api/v1/config/max_length" },
+        { "max-context-length", "/api/v1/config/max_context_length" },
+        { "soft-prompt", "/api/v1/config/soft_prompt" }, { "soft-prompts-list", "/api/v1/config/soft_prompts_list" },
+        { "version", "/api/v1/info/version" }, { "true-max-context-length", "/api/extra/true_max_context_length" },
+        { "performance", "/api/extra/perf" }, { "preloadstory", "/api/extra/preloadstory" }
+    };
+    for (const auto& [action, target] : actions)
+    {
+        cfg.llm.model_action = action;
+        const hermit::public_api::http_executor executor{ [&target](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+            EXPECT_EQ(request.host, "kobold-host");
+            EXPECT_EQ(request.port, "5001");
+            EXPECT_EQ(request.target, target);
+            EXPECT_TRUE(request.body.empty());
+            EXPECT_EQ(request.options.authorization, "Bearer secret");
+            EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+            EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 9 });
+            return hermit::public_api::http_response_data{ 200, R"({"ok":true})", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::get_kc_info(cfg, executor), R"({"ok":true})");
+    }
+    cfg.llm.model_action = "unknown";
+    const hermit::public_api::http_executor unused_executor{ [](const hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid KoboldCpp info action must be rejected before transport";
+        return hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    EXPECT_THROW(hermit::llm::get_kc_info(cfg, unused_executor), hermit::command_line_exception);
 }
 
 TEST(llm_backend_parameters, lists_tg_models_with_admin_auth_and_validates_response)
@@ -541,6 +585,31 @@ TEST(llm_backend_parameters, sends_lmstudio_anthropic_messages_request_and_valid
     EXPECT_NE(hermit::llm::create_lmstudio_messages(cfg, executor).find("msg_1"), std::string::npos);
 }
 
+TEST(llm_backend_parameters, sends_textgen_anthropic_messages_with_x_api_key)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "anthropic-token";
+    cfg.llm.api_options = R"({"max_tokens":64,"messages":[{"role":"user","content":"hello"}]})";
+    const hermit::public_api::http_executor executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.host, "textgen-host");
+        EXPECT_EQ(request.port, "5000");
+        EXPECT_EQ(request.target, "/v1/messages");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.headers.at("x-api-key"), "anthropic-token");
+        EXPECT_FALSE(request.options.authorization.has_value());
+        EXPECT_FALSE(nlohmann::json::parse(request.body).contains("model"));
+        return hermit::public_api::http_response_data{ 200,
+            R"({"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"model":"model-a","stop_reason":"end_turn"})",
+            "application/json" };
+    } };
+    EXPECT_NE(hermit::llm::create_lmstudio_messages(cfg, executor).find("msg_1"), std::string::npos);
+}
+
 TEST(llm_backend_parameters, rejects_invalid_lmstudio_anthropic_messages_request_or_response)
 {
     hermit::config cfg;
@@ -593,6 +662,39 @@ TEST(llm_backend_parameters, streams_lmstudio_anthropic_messages_sse_as_received
         return true;
     } };
     EXPECT_TRUE(hermit::llm::create_lmstudio_messages(cfg, unused_executor, stream_executor, writer).empty());
+    EXPECT_NE(received.find("message_start"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, streams_textgen_anthropic_messages_sse_as_received)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "anthropic-token";
+    cfg.llm.api_options = R"({"max_tokens":10,"messages":[{"role":"user","content":"x"}],"stream":true})";
+    std::string received;
+    const hermit::public_api::http_executor unused_executor{ [](const hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "Anthropic streaming must use the stream executor";
+        return hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    const hermit::public_api::http_stream_executor stream_executor{ [](const hermit::public_api::http_request_data& request,
+        const hermit::public_api::http_stream_handler& handler)
+    {
+        EXPECT_EQ(request.host, "textgen-host");
+        EXPECT_EQ(request.port, "5000");
+        EXPECT_EQ(request.target, "/v1/messages");
+        EXPECT_EQ(request.headers.at("x-api-key"), "anthropic-token");
+        EXPECT_TRUE(handler("event: message_start\ndata: {\"type\":\"message_start\"}\n\n"));
+        return hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+    const hermit::public_api::http_stream_handler handler{ [&received](std::string_view chunk)
+    {
+        received.append(chunk);
+        return true;
+    } };
+    EXPECT_TRUE(hermit::llm::create_lmstudio_messages(cfg, unused_executor, stream_executor, handler).empty());
     EXPECT_NE(received.find("message_start"), std::string::npos);
 }
 
@@ -966,6 +1068,873 @@ TEST(llm_backend_parameters, sends_generic_backend_api_request_with_method_body_
     EXPECT_EQ(response.body, R"({"id":"resp-1"})");
 }
 
+TEST(llm_backend_parameters, forwards_textgen_api_options_preflight_route)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.api_key = "test-token";
+    cfg.llm.api_method = "OPTIONS";
+    cfg.llm.api_path = "/";
+    const hermit::public_api::http_executor executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::options);
+        EXPECT_EQ(request.target, "/");
+        EXPECT_TRUE(request.body.empty());
+        EXPECT_EQ(request.options.authorization, "Bearer test-token");
+        return hermit::public_api::http_response_data{ 200, R"("OK")", "application/json", false };
+    } };
+
+    const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+    EXPECT_EQ(response.status_code, 200);
+    EXPECT_EQ(response.body, R"("OK")");
+}
+
+TEST(llm_backend_parameters, forwards_textgen_openai_model_and_billing_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "test-token";
+    cfg.llm.api_method = "GET";
+    const std::vector<std::pair<std::string, std::string>> routes{
+        { "/v1/models", R"({"object":"list","data":[{"id":"model-a","object":"model"}]})" },
+        { "/v1/models/model-a", R"({"id":"model-a","object":"model"})" },
+        { "/v1/billing/usage?start_date=2026-11-01&end_date=2026-11-28", R"({"total_usage":0})" }
+    };
+    for (const auto& [path, body] : routes)
+    {
+        cfg.llm.api_path = path;
+        const hermit::public_api::http_executor executor{ [&path, &body](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(request.host, "textgen-host");
+            EXPECT_EQ(request.port, "5000");
+            EXPECT_TRUE(request.body.empty());
+            EXPECT_EQ(request.options.authorization, "Bearer test-token");
+            return hermit::public_api::http_response_data{ 200, body, "application/json", false };
+        } };
+
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.status_code, 200) << path;
+        EXPECT_EQ(response.body, body) << path;
+        EXPECT_EQ(nlohmann::json::parse(response.body), nlohmann::json::parse(body)) << path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_textgen_audio_transcription_and_image_generation)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "test-token";
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/v1/audio/transcriptions";
+    cfg.llm.api_body_file = "audio-form.bin";
+    cfg.llm.api_content_type = "multipart/form-data; boundary=hermit-boundary";
+    const std::string multipart_body{
+        "--hermit-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sample.wav\"\r\n"
+        "Content-Type: audio/wav\r\n\r\nfake-wav-data\r\n--hermit-boundary\r\n"
+        "Content-Disposition: form-data; name=\"language\"\r\n\r\nen\r\n--hermit-boundary\r\n"
+        "Content-Disposition: form-data; name=\"model\"\r\n\r\nbase\r\n--hermit-boundary--\r\n" };
+    const hermit::filesystem::file_reader reader{ [&multipart_body](const std::filesystem::path&, std::ios_base::openmode)
+    {
+        return multipart_body;
+    } };
+    const hermit::public_api::http_executor audio_executor{ [&multipart_body](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/audio/transcriptions");
+        EXPECT_EQ(request.options.authorization, "Bearer test-token");
+        EXPECT_EQ(request.content_type, "multipart/form-data; boundary=hermit-boundary");
+        EXPECT_EQ(request.body, multipart_body);
+        return hermit::public_api::http_response_data{ 200, R"({"text":"recognized speech"})", "application/json" };
+    } };
+    cfg.llm.api_options.clear();
+    const auto audio_response{ hermit::llm::make_api_request(cfg, audio_executor, reader) };
+    EXPECT_EQ(nlohmann::json::parse(audio_response.body).at("text"), "recognized speech");
+
+    cfg.llm.api_body_file.clear();
+    cfg.llm.api_content_type.clear();
+    cfg.llm.api_path = "/v1/images/generations";
+    cfg.llm.api_content_type = "application/json";
+    cfg.llm.api_options = R"({"prompt":"blue square","size":"512x512","steps":4,"cfg_scale":1.5,"image_seed":7,"n":1,"response_format":"b64_json"})";
+    const hermit::public_api::http_executor image_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/images/generations");
+        EXPECT_EQ(request.options.authorization, "Bearer test-token");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(
+            R"({"prompt":"blue square","size":"512x512","steps":4,"cfg_scale":1.5,"image_seed":7,"n":1,"response_format":"b64_json"})"));
+        return hermit::public_api::http_response_data{ 200, R"({"created":0,"data":[{"b64_json":"aW1hZ2U="}]})", "application/json" };
+    } };
+    const auto image_response{ hermit::llm::make_api_request(cfg, image_executor) };
+    EXPECT_EQ(nlohmann::json::parse(image_response.body).at("data").size(), 1U);
+}
+
+TEST(llm_backend_parameters, validates_textgen_openai_model_list_schema)
+{
+    hermit::config cfg;
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "test-token";
+    const hermit::public_api::http_executor valid_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/v1/models");
+        EXPECT_EQ(request.options.authorization, "Bearer test-token");
+        return hermit::public_api::http_response_data{ 200,
+            R"({"object":"list","data":[{"id":"model-a","object":"model","created":0,"owned_by":"user"}]})",
+            "application/json", false };
+    } };
+    EXPECT_NO_THROW(hermit::llm::list_tg_openai_models(cfg, valid_executor));
+    const hermit::public_api::http_executor empty_executor{ [](const hermit::public_api::http_request_data&)
+    {
+        return hermit::public_api::http_response_data{ 200, R"({"object":"list","data":[]})", "application/json", false };
+    } };
+    EXPECT_NO_THROW(hermit::llm::list_tg_openai_models(cfg, empty_executor));
+
+    for (const std::string& body : std::vector<std::string>{
+        R"({"object":"list","data":[{"id":"model-a"}]})", R"({"data":[]})" })
+    {
+        const hermit::public_api::http_executor invalid_executor{ [&body](const hermit::public_api::http_request_data&)
+        {
+            return hermit::public_api::http_response_data{ 200, body, "application/json", false };
+        } };
+        EXPECT_THROW(hermit::llm::list_tg_openai_models(cfg, invalid_executor), hermit::command_line_exception);
+    }
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_optional_routes_with_their_json_bodies)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "server-password";
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_content_type = "application/json";
+    cfg.timeout_connect = 3;
+    cfg.timeout_request = 8;
+    const std::vector<std::pair<std::string, std::string>> requests{
+        { "/api/extra/websearch", R"({"q":"local inference"})" },
+        { "/api/extra/multiplayer/status", R"({"senderbusy":false,"sender":"client-1"})" },
+        { "/api/extra/multiplayer/getstory", "{}" },
+        { "/api/extra/multiplayer/setstory", R"({"full_update":true,"sender":"client-1","data_format":"json","data":"{}"})" },
+        { "/api/extra/data/list", "{}" },
+        { "/api/extra/data/load", R"({"slot":1})" },
+        { "/api/extra/data/save", R"({"slot":1,"format":"json","title":"test","data":{}})" }
+    };
+    for (const auto& [path, expected_body] : requests)
+    {
+        cfg.llm.api_path = path;
+        cfg.llm.api_options = expected_body;
+        const hermit::public_api::http_executor executor{ [&path, &expected_body](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+            EXPECT_EQ(request.host, "kobold-host");
+            EXPECT_EQ(request.port, "5001");
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(expected_body));
+            EXPECT_EQ(request.content_type, "application/json");
+            EXPECT_EQ(request.options.authorization, "Bearer server-password");
+            EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 3 });
+            EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 8 });
+            return hermit::public_api::http_response_data{ 200, R"({"ok":true})", "application/json" };
+        } };
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.body, R"({"ok":true})") << path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_admin_and_mcp_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "admin-password";
+    cfg.llm.api_method = "GET";
+    cfg.llm.api_path = "/api/admin/list_options";
+    cfg.llm.api_content_type = "application/json";
+    cfg.timeout_connect = 3;
+    cfg.timeout_request = 8;
+    const std::vector<std::tuple<std::string, std::string, std::string, std::string>> requests{
+        { "GET", "/api/admin/list_options", "", R"({"configs":[],"models":[]})" },
+        { "POST", "/api/admin/reload_config", R"({"filename":"unload_model"})", R"({"ok":true})" },
+        { "POST", "/api/admin/check_state", "{}", R"({"ok":true})" },
+        { "POST", "/api/admin/save_state", "{}", R"({"ok":true})" },
+        { "POST", "/api/admin/load_state", "{}", R"({"ok":true})" },
+        { "POST", "/api/admin/clear_state", "{}", R"({"ok":true})" }
+    };
+    for (const auto& [method, path, expected_body, response_body] : requests)
+    {
+        cfg.llm.api_method = method;
+        cfg.llm.api_path = path;
+        cfg.llm.api_options = expected_body;
+        const hermit::public_api::http_executor executor{ [&method, &path, &expected_body, &response_body](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, method == "GET" ? hermit::public_api::http_method::get : hermit::public_api::http_method::post);
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(request.body, expected_body);
+            EXPECT_EQ(request.options.authorization, "Bearer admin-password");
+            EXPECT_EQ(request.content_type, "application/json");
+            return hermit::public_api::http_response_data{ 200, response_body, "application/json" };
+        } };
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.body, response_body) << path;
+    }
+
+    cfg.llm.api_key = "server-password";
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/mcp";
+    cfg.llm.api_options = R"({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})";
+    const hermit::public_api::http_executor mcp_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/mcp");
+        EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(
+            R"({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})"));
+        EXPECT_EQ(request.options.authorization, "Bearer server-password");
+        EXPECT_EQ(request.content_type, "application/json");
+        return hermit::public_api::http_response_data{ 200,
+            R"({"jsonrpc":"2.0","id":1,"result":{"tools":[]}})", "application/json" };
+    } };
+    const hermit::public_api::http_response_data mcp_response{ hermit::llm::make_api_request(cfg, mcp_executor) };
+    EXPECT_EQ(mcp_response.body, R"({"jsonrpc":"2.0","id":1,"result":{"tools":[]}})");
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_documentation_metadata_and_ui_get_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_method = "GET";
+    cfg.llm.api_content_type.clear();
+    const std::vector<std::tuple<std::string, std::string>> routes{
+        { "/api", "application/json" },
+        { "/docs", "text/html" },
+        { "/v1", "text/html" },
+        { "/props", "application/json" },
+        { "/.well-known/serviceinfo", "application/json" },
+        { "/", "text/html" },
+        { "/noscript", "text/html" },
+        { "/lcpp/", "text/html" },
+        { "/sdui", "text/html" },
+        { "/musicui", "text/html" },
+        { "/manifest.json", "application/manifest+json" }
+    };
+    for (const auto& [path, content_type] : routes)
+    {
+        cfg.llm.api_path = path;
+        const hermit::public_api::http_executor executor{ [&path, &content_type](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+            EXPECT_EQ(request.target, path);
+            EXPECT_TRUE(request.body.empty());
+            EXPECT_FALSE(request.options.authorization.has_value());
+            const std::string body{ "response for " + path };
+            return hermit::public_api::http_response_data{ 200, body, content_type };
+        } };
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.content_type, content_type) << path;
+        EXPECT_EQ(response.body, "response for " + path) << path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_legacy_request_and_a1111_catalog_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_content_type = "application/json";
+    const hermit::public_api::http_executor executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        if (request.target == "/request")
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+            EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(R"({"text":"hello","max":32})"));
+            EXPECT_EQ(request.options.authorization, "Bearer server-password");
+            return hermit::public_api::http_response_data{ 200, R"({"data":{"seqs":["reply"]}})", "application/json" };
+        }
+        EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+        EXPECT_TRUE(request.body.empty());
+        EXPECT_FALSE(request.options.authorization.has_value());
+        return hermit::public_api::http_response_data{ 200, R"([])", "application/json" };
+    } };
+
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/request";
+    cfg.llm.api_key = "server-password";
+    cfg.llm.api_options = R"({"text":"hello","max":32})";
+    const hermit::public_api::http_response_data legacy_response{ hermit::llm::make_api_request(cfg, executor) };
+    EXPECT_EQ(nlohmann::json::parse(legacy_response.body), nlohmann::json::parse(R"({"data":{"seqs":["reply"]}})"));
+
+    cfg.llm.api_method = "GET";
+    cfg.llm.api_key.clear();
+    cfg.llm.api_options.clear();
+    const std::vector<std::string> paths{
+        "/sdapi/v1/sd-models", "/sdapi/v1/options", "/sdapi/v1/samplers", "/sdapi/v1/schedulers",
+        "/sdapi/v1/loras", "/sdapi/v1/upscalers", "/sdapi/v1/latent-upscale-modes"
+    };
+    for (const std::string& path : paths)
+    {
+        cfg.llm.api_path = path;
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.body, "[]") << path;
+        EXPECT_EQ(response.content_type, "application/json") << path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_documented_koboldcpp_route_aliases_without_rewriting_paths)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_content_type = "application/json";
+    struct AliasRequest
+    {
+        std::string method;
+        std::string path;
+        std::string body;
+        bool needs_password;
+    };
+    const std::vector<AliasRequest> aliases{
+        { "POST", "/api/latest/generate", R"({"prompt":"hello"})", true },
+        { "POST", "/api/extra/tokenize", R"({"prompt":"hello"})", true },
+        { "POST", "/v1/completion", R"({"model":"m","prompt":"hello"})", true },
+        { "POST", "/completions", R"({"model":"m","prompt":"hello"})", true },
+        { "POST", "/chat/completions", R"({"model":"m","messages":[{"role":"user","content":"hello"}]})", true },
+        { "POST", "/responses", R"({"model":"m","input":"hello"})", true },
+        { "GET", "/models", "", false },
+        { "POST", "/audio/transcriptions", R"({"audio_data":"AQID","language":"en"})", true },
+        { "POST", "/audio/speech", R"({"model":"m","input":"hello","voice":"alloy"})", true },
+        { "GET", "/audio/voices", "", false },
+        { "POST", "/images/generations", R"({"prompt":"hello"})", false },
+        { "POST", "/messages", R"({"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hello"}]})", true },
+        { "GET", "/view.png", "", false },
+        { "GET", "/api/view", "", false },
+        { "GET", "/view_image", "", false },
+        { "GET", "/api/history", "", false }
+    };
+    for (const AliasRequest& alias : aliases)
+    {
+        cfg.llm.api_method = alias.method;
+        cfg.llm.api_path = alias.path;
+        cfg.llm.api_options = alias.body;
+        cfg.llm.api_key = alias.needs_password ? "server-password" : "";
+        const hermit::public_api::http_executor executor{ [&alias](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.target, alias.path);
+            EXPECT_EQ(request.method, alias.method == "GET" ? hermit::public_api::http_method::get : hermit::public_api::http_method::post);
+            if (alias.body.empty()) EXPECT_TRUE(request.body.empty());
+            else EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(alias.body));
+            EXPECT_EQ(request.options.authorization.has_value(), alias.needs_password);
+            if (alias.needs_password) EXPECT_EQ(request.options.authorization, "Bearer server-password");
+            return hermit::public_api::http_response_data{ 200, "{}", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::make_api_request(cfg, executor).status_code, 200) << alias.path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_a1111_progress_and_comfyui_metadata_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_method = "GET";
+    cfg.llm.api_content_type.clear();
+    const std::vector<std::string> routes{
+        "/sdapi/v1/progress", "/sdapi/v1/progress?skip_current_image=true",
+        "/sdapi/v1/get_last.json", "/sdapi/v1/get_last.json?genkey=gen-1",
+        "/ping", "/system_stats", "/object_info",
+        "/models/checkpoints", "/api/models/checkpoints", "/models/loras", "/api/models/loras"
+    };
+    for (const std::string& path : routes)
+    {
+        cfg.llm.api_path = path;
+        const hermit::public_api::http_executor executor{ [&path](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+            EXPECT_EQ(request.target, path);
+            EXPECT_TRUE(request.body.empty());
+            EXPECT_FALSE(request.options.authorization.has_value());
+            return hermit::public_api::http_response_data{ 200, R"({"route":"forwarded"})", "application/json" };
+        } };
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.body, R"({"route":"forwarded"})") << path;
+        EXPECT_EQ(response.content_type, "application/json") << path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_xtts_settings_and_legacy_voice_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    const std::vector<std::tuple<std::string, std::string, std::string>> routes{
+        { "GET", "/get_tts_settings", "" },
+        { "POST", "/set_tts_settings", R"({"speed":1.0})" },
+        { "GET", "/voice/check", "" },
+        { "GET", "/voice/speakers", "" },
+        { "GET", "/voice/vits", "" }
+    };
+    for (const auto& [method, path, body] : routes)
+    {
+        cfg.llm.api_method = method;
+        cfg.llm.api_path = path;
+        cfg.llm.api_options = body;
+        cfg.llm.api_content_type = body.empty() ? "" : "application/json";
+        const hermit::public_api::http_executor executor{ [&method, &path, &body](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, method == "GET" ? hermit::public_api::http_method::get : hermit::public_api::http_method::post);
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(request.body, body);
+            EXPECT_FALSE(request.options.authorization.has_value());
+            const std::string response_body{ "response for " + path };
+            return hermit::public_api::http_response_data{ 200, response_body, "application/json" };
+        } };
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.body, "response for " + path) << path;
+        EXPECT_EQ(response.content_type, "application/json") << path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_audio_embedding_music_and_speaker_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "server-password";
+    cfg.timeout_connect = 3;
+    cfg.timeout_request = 8;
+    const std::vector<std::pair<std::string, std::string>> json_requests{
+        { "/api/extra/transcribe", R"({"audio_data":"AQID","language":"en","prompt":"greeting","suppress_non_speech":true})" },
+        { "/api/extra/tts", R"({"text":"hello","language":"en","response_format":"mp3"})" },
+        { "/api/extra/embeddings", R"({"input":["hello","world"]})" },
+        { "/api/extra/music/prepare", R"({"caption":"calm piano","lyrics":"","duration":8,"gen_codes":true})" },
+        { "/api/extra/music/generate", R"({"caption":"calm piano","lyrics":"","duration":8,"bpm":90,"seed":1})" }
+    };
+    for (const auto& [path, expected_body] : json_requests)
+    {
+        cfg.llm.api_method = "POST";
+        cfg.llm.api_path = path;
+        cfg.llm.api_options = expected_body;
+        cfg.llm.api_body_file.clear();
+        cfg.llm.api_content_type = "application/json";
+        const hermit::public_api::http_executor executor{ [&path, &expected_body](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(expected_body));
+            EXPECT_EQ(request.content_type, "application/json");
+            EXPECT_EQ(request.options.authorization, "Bearer server-password");
+            EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 3 });
+            EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 8 });
+            return hermit::public_api::http_response_data{ 200, R"({"ok":true})", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::make_api_request(cfg, executor).body, R"({"ok":true})") << path;
+    }
+
+    cfg.llm.api_method = "GET";
+    cfg.llm.api_path = "/api/extra/speakers_list";
+    cfg.llm.api_options.clear();
+    cfg.llm.api_content_type.clear();
+    cfg.llm.api_key.clear();
+    const hermit::public_api::http_executor speakers_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/api/extra/speakers_list");
+        EXPECT_TRUE(request.body.empty());
+        EXPECT_FALSE(request.options.authorization.has_value());
+        return hermit::public_api::http_response_data{ 200, R"(["alloy","random"])", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, speakers_executor).body, R"(["alloy","random"])");
+
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/api/extra/transcribe";
+    cfg.llm.api_body_file = "audio.wav";
+    cfg.llm.api_content_type = "multipart/form-data; boundary=hermit-test";
+    const hermit::filesystem::file_reader reader{ [](const std::filesystem::path&, std::ios::openmode)
+    {
+        return std::string{ "--hermit-test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n\r\n" }
+            + std::string{ "\x01\x02\x03", 3 } + "\r\n--hermit-test--\r\n";
+    } };
+    const hermit::public_api::http_executor multipart_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/api/extra/transcribe");
+        EXPECT_EQ(request.content_type, "multipart/form-data; boundary=hermit-test");
+        EXPECT_NE(request.body.find(std::string{ "\x01\x02\x03", 3 }), std::string::npos);
+        return hermit::public_api::http_response_data{ 200, R"({"text":"hello"})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, multipart_executor, reader).body, R"({"text":"hello"})");
+
+    cfg.llm.api_body_file.clear();
+    cfg.llm.api_content_type.clear();
+    const hermit::public_api::http_executor audio_executor{ [](const hermit::public_api::http_request_data&)
+    {
+        return hermit::public_api::http_response_data{ 200, std::string{ "\x52\x49\x46\x46", 4 }, "audio/wav" };
+    } };
+    const hermit::public_api::http_response_data audio_response{ hermit::llm::make_api_request(cfg, audio_executor) };
+    const std::string expected_audio{ "\x52\x49\x46\x46", 4 };
+    EXPECT_EQ(audio_response.body, expected_audio);
+    EXPECT_EQ(audio_response.content_type, "audio/wav");
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_openai_routes_with_route_specific_auth)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "server-password";
+    cfg.llm.api_content_type = "application/json";
+    const std::vector<std::pair<std::string, std::string>> protected_json_routes{
+        { "/v1/completions", R"({"model":"koboldcpp/model","prompt":"hello"})" },
+        { "/v1/chat/completions", R"({"model":"koboldcpp/model","messages":[{"role":"user","content":"hello"}]})" },
+        { "/v1/responses", R"({"model":"koboldcpp/model","input":"hello"})" },
+        { "/v1/embeddings", R"({"model":"koboldcpp/embeddings","input":["hello"],"encoding_format":"base64"})" },
+        { "/v1/audio/transcriptions", R"({"audio_data":"AQID","language":"en","prompt":"greeting"})" },
+        { "/v1/audio/speech", R"({"model":"tts","input":"hello","response_format":"mp3"})" }
+    };
+    for (const auto& [path, expected_body] : protected_json_routes)
+    {
+        cfg.llm.api_method = "POST";
+        cfg.llm.api_path = path;
+        cfg.llm.api_options = expected_body;
+        const hermit::public_api::http_executor executor{ [&path, &expected_body](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(expected_body));
+            EXPECT_EQ(request.options.authorization, "Bearer server-password");
+            return hermit::public_api::http_response_data{ 200, "{}", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::make_api_request(cfg, executor).status_code, 200) << path;
+    }
+
+    cfg.llm.api_method = "GET";
+    cfg.llm.api_path = "/v1/models";
+    cfg.llm.api_options.clear();
+    cfg.llm.api_key.clear();
+    const hermit::public_api::http_executor public_get_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/v1/models");
+        EXPECT_FALSE(request.options.authorization.has_value());
+        return hermit::public_api::http_response_data{ 200, R"({"data":[{"id":"model"}]})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, public_get_executor).status_code, 200);
+
+    cfg.llm.api_path = "/v1/audio/voices";
+    const hermit::public_api::http_executor voices_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/v1/audio/voices");
+        EXPECT_FALSE(request.options.authorization.has_value());
+        return hermit::public_api::http_response_data{ 200, R"({"voices":[{"voice_id":"alloy"}]})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, voices_executor).status_code, 200);
+
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/v1/images/generations";
+    cfg.llm.api_options = R"({"prompt":"a blue square","size":"512x512","response_format":"b64_json"})";
+    const hermit::public_api::http_executor public_post_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/images/generations");
+        EXPECT_FALSE(request.options.authorization.has_value());
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("response_format"), "b64_json");
+        return hermit::public_api::http_response_data{ 200, R"({"data":[{"b64_json":"aW1hZ2U="}]})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, public_post_executor).status_code, 200);
+
+    cfg.llm.api_path = "/v1/images/edits";
+    cfg.llm.api_options.clear();
+    cfg.llm.api_body_file = "image-form.bin";
+    cfg.llm.api_content_type = "multipart/form-data; boundary=edit";
+    const hermit::filesystem::file_reader reader{ [](const std::filesystem::path&, std::ios::openmode)
+    {
+        return std::string{ "--edit\r\nContent-Disposition: form-data; name=\"image\"; filename=\"source.png\"\r\n\r\n" }
+            + std::string{ "\x89PNG", 4 } + "\r\n--edit--\r\n";
+    } };
+    const hermit::public_api::http_executor edit_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/v1/images/edits");
+        EXPECT_EQ(request.content_type, "multipart/form-data; boundary=edit");
+        EXPECT_FALSE(request.options.authorization.has_value());
+        EXPECT_NE(request.body.find(std::string{ "\x89PNG", 4 }), std::string::npos);
+        return hermit::public_api::http_response_data{ 200, R"({"data":[{"b64_json":"ZWRpdGVk"}]})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, edit_executor, reader).status_code, 200);
+
+    cfg.llm.api_path = "/images/edits";
+    const hermit::public_api::http_executor edit_alias_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/images/edits");
+        EXPECT_EQ(request.content_type, "multipart/form-data; boundary=edit");
+        EXPECT_FALSE(request.options.authorization.has_value());
+        EXPECT_NE(request.body.find(std::string{ "\x89PNG", 4 }), std::string::npos);
+        return hermit::public_api::http_response_data{ 200, R"({"data":[{"b64_json":"ZWRpdGVk"}]})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, edit_alias_executor, reader).status_code, 200);
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_anthropic_and_ollama_compatibility_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "11434";
+    cfg.llm.api_key = "server-password";
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 12;
+
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/v1/messages";
+    cfg.llm.api_content_type = "application/json";
+    cfg.llm.api_options = R"({"model":"koboldcpp/model","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":true})";
+    cfg.llm.api_headers = R"({"anthropic-version":"2023-06-01"})";
+    const hermit::public_api::http_executor anthropic_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/v1/messages");
+        EXPECT_EQ(request.options.authorization, "Bearer server-password");
+        EXPECT_EQ(request.headers.at("anthropic-version"), "2023-06-01");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("messages").at(0).at("content"), "hello");
+        return hermit::public_api::http_response_data{ 200, R"(event: message
+data: {"type":"message_start"}
+
+)", "text/event-stream" };
+    } };
+    const hermit::public_api::http_response_data anthropic_response{ hermit::llm::make_api_request(cfg, anthropic_executor) };
+    EXPECT_EQ(anthropic_response.content_type, "text/event-stream");
+    EXPECT_NE(anthropic_response.body.find("message_start"), std::string::npos);
+
+    const std::vector<std::pair<std::string, std::string>> ollama_routes{
+        { "/api/generate", R"({"model":"llama3.2","prompt":"hello","stream":false})" },
+        { "/api/chat", R"({"model":"llama3.2","messages":[{"role":"user","content":"hello"}],"stream":false})" },
+        { "/api/embed", R"({"model":"embeddinggemma","input":["hello","world"]})" },
+        { "/api/show", R"({"model":"llama3.2"})" }
+    };
+    for (const auto& [path, expected_body] : ollama_routes)
+    {
+        cfg.llm.api_method = "POST";
+        cfg.llm.api_path = path;
+        cfg.llm.api_options = expected_body;
+        cfg.llm.api_headers.clear();
+        const bool protected_route{ path != "/api/show" };
+        cfg.llm.api_key = protected_route ? "server-password" : "";
+        const hermit::public_api::http_executor executor{ [&path, &expected_body, protected_route](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(expected_body));
+            EXPECT_EQ(request.options.authorization.has_value(), protected_route);
+            if (protected_route) EXPECT_EQ(request.options.authorization, "Bearer server-password");
+            return hermit::public_api::http_response_data{ 200, "{}", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::make_api_request(cfg, executor).status_code, 200) << path;
+    }
+
+    cfg.llm.api_options.clear();
+    cfg.llm.api_key.clear();
+    for (const std::string path : { "/api/tags", "/api/ps", "/api/version" })
+    {
+        cfg.llm.api_method = "GET";
+        cfg.llm.api_path = path;
+        const hermit::public_api::http_executor executor{ [&path](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+            EXPECT_EQ(request.target, path);
+            EXPECT_FALSE(request.options.authorization.has_value());
+            return hermit::public_api::http_response_data{ 200, "{}", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::make_api_request(cfg, executor).status_code, 200) << path;
+    }
+}
+
+TEST(llm_backend_parameters, forwards_koboldcpp_a1111_comfyui_and_xtts_routes)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key.clear();
+    cfg.llm.api_content_type = "application/json";
+    const std::vector<std::pair<std::string, std::string>> public_post_routes{
+        { "/sdapi/v1/txt2img", R"({"prompt":"blue square","steps":2})" },
+        { "/sdapi/v1/img2img", R"({"prompt":"blue square","init_images":["aW1hZ2U="]})" },
+        { "/sdapi/v1/upscale", R"({"image":"aW1hZ2U=","upscaling_resize":2})" },
+        { "/sdapi/v1/extra-single-image", R"({"image":"aW1hZ2U=","upscaler_1":"Lanczos","upscaling_resize":2})" },
+        { "/sdapi/v1/interrogate", R"({"image":"aW1hZ2U=","model":"clip"})" },
+        { "/prompt", R"({"prompt":{"1":{"class_type":"EmptyLatentImage","inputs":{"width":512,"height":512}}},"client_id":"test-client"})" },
+        { "/tts_to_audio", R"({"text":"Hello","speaker_id":"speaker-1","language":"en"})" }
+    };
+    for (const auto& [path, expected_body] : public_post_routes)
+    {
+        cfg.llm.api_method = "POST";
+        cfg.llm.api_path = path;
+        cfg.llm.api_options = expected_body;
+        const hermit::public_api::http_executor executor{ [&path, &expected_body](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+            EXPECT_EQ(request.target, path);
+            EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json::parse(expected_body));
+            EXPECT_EQ(request.content_type, "application/json");
+            EXPECT_FALSE(request.options.authorization.has_value());
+            return hermit::public_api::http_response_data{ 200, R"({"ok":true})", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::make_api_request(cfg, executor).status_code, 200) << path;
+    }
+
+    cfg.llm.api_path = "/upload/image";
+    cfg.llm.api_options.clear();
+    cfg.llm.api_body_file = "image-upload.multipart";
+    cfg.llm.api_content_type = "multipart/form-data; boundary=upload";
+    const hermit::filesystem::file_reader reader{ [](const std::filesystem::path&, std::ios::openmode)
+    {
+        return std::string{ "--upload\r\nContent-Disposition: form-data; name=\"image\"; filename=\"input.png\"\r\n\r\n" }
+            + std::string{ "\x89PNG", 4 } + "\r\n--upload--\r\n";
+    } };
+    const hermit::public_api::http_executor upload_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/upload/image");
+        EXPECT_EQ(request.content_type, "multipart/form-data; boundary=upload");
+        EXPECT_NE(request.body.find(std::string{ "\x89PNG", 4 }), std::string::npos);
+        EXPECT_FALSE(request.options.authorization.has_value());
+        return hermit::public_api::http_response_data{ 200, R"({"name":"input.png","subfolder":"","type":"input"})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, upload_executor, reader).status_code, 200);
+
+    cfg.llm.api_path = "/api/upload/image";
+    const hermit::public_api::http_executor upload_alias_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/api/upload/image");
+        EXPECT_EQ(request.content_type, "multipart/form-data; boundary=upload");
+        EXPECT_NE(request.body.find(std::string{ "\x89PNG", 4 }), std::string::npos);
+        EXPECT_FALSE(request.options.authorization.has_value());
+        return hermit::public_api::http_response_data{ 200, R"({"name":"input.png"})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::make_api_request(cfg, upload_alias_executor, reader).status_code, 200);
+
+    cfg.llm.api_body_file.clear();
+    cfg.llm.api_options.clear();
+    cfg.llm.api_content_type.clear();
+    const std::vector<std::pair<std::string, std::string>> public_get_routes{
+        { "GET", "/view?filename=image.png&type=output" }, { "GET", "/history" }, { "GET", "/speakers_list" }
+    };
+    const std::string expected_image{ "\x89PNG", 4 };
+    for (const auto& route : public_get_routes)
+    {
+        cfg.llm.api_method = route.first;
+        cfg.llm.api_path = route.second;
+        const hermit::public_api::http_executor executor{ [&route](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, hermit::public_api::http_method::get);
+            EXPECT_EQ(request.target, route.second);
+            EXPECT_FALSE(request.options.authorization.has_value());
+            const bool image_response{ route.second.starts_with("/view") };
+            return hermit::public_api::http_response_data{ 200,
+                image_response ? std::string{ "\x89PNG", 4 } : "{}", image_response ? "image/png" : "application/json" };
+        } };
+        const hermit::public_api::http_response_data response{ hermit::llm::make_api_request(cfg, executor) };
+        EXPECT_EQ(response.status_code, 200) << route.second;
+        EXPECT_EQ(response.content_type, route.second.starts_with("/view") ? "image/png" : "application/json") << route.second;
+        if (route.second.starts_with("/view")) EXPECT_EQ(response.body, expected_image);
+    }
+
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/api/extra/tts";
+    cfg.llm.api_key = "server-password";
+    const hermit::public_api::http_executor tts_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/api/extra/tts");
+        EXPECT_TRUE(request.options.authorization.has_value());
+        return hermit::public_api::http_response_data{ 200, "WAVE", "audio/wav" };
+    } };
+    const hermit::public_api::http_response_data tts_response{ hermit::llm::make_api_request(cfg, tts_executor) };
+    EXPECT_EQ(tts_response.body, "WAVE");
+    EXPECT_EQ(tts_response.content_type, "audio/wav");
+}
+
+TEST(llm_backend_parameters, streams_generic_backend_api_request_and_preserves_headers)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "127.0.0.1";
+    cfg.llm.port = "5000";
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/v1/chat/completions";
+    cfg.llm.api_options = R"({"model":"loaded","messages":[{"role":"user","content":"hello"}],"stream":true})";
+    cfg.llm.api_key = "test-key";
+    cfg.llm.api_headers = R"({"X-Trace":"trace-1"})";
+    cfg.timeout_connect = 3;
+    cfg.timeout_request = 8;
+    std::string received;
+    const hermit::public_api::http_stream_executor executor{ [](const hermit::public_api::http_request_data& request,
+        const hermit::public_api::http_stream_handler& handler)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/chat/completions");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("stream"), true);
+        EXPECT_EQ(request.options.authorization, "Bearer test-key");
+        EXPECT_EQ(request.headers.at("X-Trace"), "trace-1");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 3 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 8 });
+        EXPECT_TRUE(handler("data: {\"choices\":[]}\n\n"));
+        return hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+    const hermit::public_api::http_stream_handler handler{ [&received](std::string_view chunk)
+    {
+        received.append(chunk);
+        return true;
+    } };
+    const hermit::public_api::http_stream_response_data response{ hermit::llm::StreamApiRequest(cfg, executor, handler) };
+    EXPECT_EQ(response.content_type, "text/event-stream");
+    EXPECT_EQ(received, "data: {\"choices\":[]}\n\n");
+}
+
+TEST(llm_backend_parameters, streams_textgen_openai_completions_route)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "127.0.0.1";
+    cfg.llm.port = "5000";
+    cfg.llm.api_method = "POST";
+    cfg.llm.api_path = "/v1/completions";
+    cfg.llm.api_options = R"({"model":"loaded","prompt":"hello","stream":true})";
+    cfg.llm.api_key = "api-key";
+    std::string received;
+    const hermit::public_api::http_stream_executor executor{ [](const hermit::public_api::http_request_data& request,
+        const hermit::public_api::http_stream_handler& handler)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/completions");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("stream"), true);
+        EXPECT_EQ(request.options.authorization, "Bearer api-key");
+        EXPECT_TRUE(handler("data: {\"choices\":[{\"text\":\"hello\"}]}\n\n"));
+        EXPECT_TRUE(handler("data: [DONE]\n\n"));
+        return hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+    const hermit::public_api::http_stream_handler handler{ [&received](std::string_view chunk)
+    {
+        received.append(chunk);
+        return true;
+    } };
+
+    EXPECT_EQ(hermit::llm::StreamApiRequest(cfg, executor, handler).content_type, "text/event-stream");
+    EXPECT_EQ(received, "data: {\"choices\":[{\"text\":\"hello\"}]}\n\ndata: [DONE]\n\n");
+}
+
 TEST(llm_backend_parameters, rejects_unsafe_generic_backend_api_requests_before_transport)
 {
     hermit::config cfg;
@@ -1027,6 +1996,30 @@ TEST(llm_backend_parameters, creates_openai_compatible_embeddings)
         const nlohmann::json body{ nlohmann::json::parse(request.body) };
         EXPECT_EQ(body.at("input"), "text to embed");
         EXPECT_EQ(body.at("model"), "embed-model");
+        EXPECT_EQ(body.at("encoding_format"), "float");
+        return hermit::public_api::http_response_data{ 200, R"({"data":[{"embedding":[0.1]}]})", "application/json" };
+    } };
+
+    EXPECT_EQ(hermit::llm::create_embeddings(cfg, executor), R"({"data":[{"embedding":[0.1]}]})");
+}
+
+TEST(llm_backend_parameters, creates_textgen_openai_embeddings)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.port = "5000";
+    cfg.llm.prompt = "text to embed";
+    cfg.llm.embedding_target = "/v1/embeddings";
+    cfg.llm.api_key = "api-token";
+    const hermit::public_api::http_executor executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.port, "5000");
+        EXPECT_EQ(request.target, "/v1/embeddings");
+        EXPECT_EQ(request.options.authorization, "Bearer api-token");
+        const nlohmann::json body{ nlohmann::json::parse(request.body) };
+        EXPECT_EQ(body.at("input"), "text to embed");
+        EXPECT_FALSE(body.contains("model"));
         EXPECT_EQ(body.at("encoding_format"), "float");
         return hermit::public_api::http_response_data{ 200, R"({"data":[{"embedding":[0.1]}]})", "application/json" };
     } };
@@ -1141,6 +2134,156 @@ TEST(llm_backend_parameters, detokenizes_token_ids_and_rejects_http_errors)
         return hermit::public_api::http_response_data{ 500, "failure" };
     } };
     EXPECT_THROW(hermit::llm::detokenize(cfg, error_executor), hermit::http_status_exception);
+}
+
+TEST(llm_backend_parameters, tokenizes_and_detokenizes_with_koboldcpp_contracts)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.prompt = "hello";
+    cfg.llm.tokenize_options = R"({"use_cache":false})";
+    cfg.llm.token_ids = { 1, 2 };
+    cfg.llm.api_key = "password";
+    cfg.timeout_connect = 1;
+    cfg.timeout_request = 7;
+    const hermit::public_api::http_executor tokenize_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/api/extra/tokenize");
+        EXPECT_EQ(request.options.authorization, "Bearer password");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 1 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 7 });
+        const nlohmann::json body{ nlohmann::json::parse(request.body) };
+        EXPECT_EQ(body.at("prompt"), "hello");
+        EXPECT_FALSE(body.at("use_cache"));
+        return hermit::public_api::http_response_data{ 200, R"({"value":2,"tokens":[1,2]})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::tokenize(cfg, tokenize_executor), R"({"value":2,"tokens":[1,2]})");
+
+    const hermit::public_api::http_executor detokenize_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/api/extra/detokenize");
+        const nlohmann::json body{ nlohmann::json::parse(request.body) };
+        EXPECT_EQ(body.at("ids"), nlohmann::json({ 1, 2 }));
+        return hermit::public_api::http_response_data{ 200, R"({"result":"hello","success":true})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::detokenize(cfg, detokenize_executor), R"({"result":"hello","success":true})");
+
+    cfg.llm.tokenize_options = R"({"prompt":"override"})";
+    EXPECT_THROW(hermit::llm::tokenize(cfg, tokenize_executor), hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, converts_koboldcpp_json_schema_to_grammar)
+{
+    hermit::config cfg;
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "password";
+    cfg.llm.json_to_grammar_options = R"({"schema":{"type":"object","properties":{"answer":{"type":"string"}}}})";
+    const hermit::public_api::http_executor executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/api/extra/json_to_grammar");
+        EXPECT_EQ(request.options.authorization, "Bearer password");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("schema").at("type"), "object");
+        return hermit::public_api::http_response_data{ 200, R"({"grammar":"root ::= \"ok\""})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::convert_kc_json_to_grammar(cfg, executor), R"({"grammar":"root ::= \"ok\""})");
+
+    cfg.llm.json_to_grammar_options = R"({"definition":{}})";
+    const hermit::public_api::http_executor unused_executor{ [](const hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "missing JSON schema must be rejected before transport";
+        return hermit::public_api::http_response_data{ 200, "{}" };
+    } };
+    EXPECT_THROW(hermit::llm::convert_kc_json_to_grammar(cfg, unused_executor), hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, streams_checks_and_aborts_koboldcpp_generation)
+{
+    hermit::config cfg;
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "password";
+    cfg.llm.api_options = R"({"prompt":"hello","max_length":12,"genkey":"request-1"})";
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 20;
+    std::string received;
+    const hermit::public_api::http_stream_executor stream_executor{ [&received](const hermit::public_api::http_request_data& request,
+        const hermit::public_api::http_stream_handler& handler)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/api/extra/generate/stream");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer password");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 20 });
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("genkey"), "request-1");
+        EXPECT_TRUE(handler("event: message\ndata: {\"token\":\"hello\",\"finish_reason\":null}\n\n"));
+        return hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+    const hermit::public_api::http_stream_handler writer{ [&received](std::string_view chunk)
+    {
+        received.append(chunk);
+        return true;
+    } };
+    EXPECT_EQ(hermit::llm::stream_kc_generation(cfg, stream_executor, writer).content_type, "text/event-stream");
+    EXPECT_NE(received.find("hello"), std::string::npos);
+
+    cfg.llm.kc_generation_action = "check";
+    const hermit::public_api::http_executor check_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/api/extra/generate/check");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("genkey"), "request-1");
+        return hermit::public_api::http_response_data{ 200, R"({"results":[{"text":"partial"}]})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::manage_kc_generation(cfg, check_executor), R"({"results":[{"text":"partial"}]})");
+
+    cfg.llm.kc_generation_action = "abort";
+    const hermit::public_api::http_executor abort_executor{ [](const hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/api/extra/abort");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("genkey"), "request-1");
+        return hermit::public_api::http_response_data{ 200, R"({"success":"true","done":"true"})", "application/json" };
+    } };
+    EXPECT_EQ(hermit::llm::manage_kc_generation(cfg, abort_executor), R"({"success":"true","done":"true"})");
+}
+
+TEST(llm_backend_parameters, gets_koboldcpp_last_generation_logprobs)
+{
+    hermit::config cfg;
+    cfg.llm.backend_name = "kc";
+    cfg.llm.kc_generation_action = "logprobs";
+    cfg.llm.host = "kobold-host";
+    cfg.llm.port = "5001";
+    cfg.llm.api_key = "secret";
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 7;
+    for (const auto& [api_options, expected_method, expected_body] : std::vector<std::tuple<std::string,
+        hermit::public_api::http_method, std::string>>{
+            { "", hermit::public_api::http_method::get, "" },
+            { R"({"genkey":"request-1"})", hermit::public_api::http_method::post, R"({"genkey":"request-1"})" }
+        })
+    {
+        cfg.llm.api_options = api_options;
+        const hermit::public_api::http_executor executor{ [&](const hermit::public_api::http_request_data& request)
+        {
+            EXPECT_EQ(request.method, expected_method);
+            EXPECT_EQ(request.host, "kobold-host");
+            EXPECT_EQ(request.port, "5001");
+            EXPECT_EQ(request.target, "/api/extra/last_logprobs");
+            EXPECT_EQ(request.body, expected_body);
+            EXPECT_EQ(request.options.authorization, "Bearer secret");
+            EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+            EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 7 });
+            return hermit::public_api::http_response_data{ 200, R"({"logprobs":{"content":[]}})", "application/json" };
+        } };
+        EXPECT_EQ(hermit::llm::manage_kc_generation(cfg, executor), R"({"logprobs":{"content":[]}})");
+    }
 }
 
 TEST(llm_backend_parameters, encodes_and_decodes_text_generation_web_ui_tokens)

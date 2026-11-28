@@ -17,6 +17,8 @@ namespace hermit
     {
         void read_paragraphs_file(config& cfg);
         std::string list_models(const config& cfg, const public_api::http_executor& executor);
+        std::string list_tg_openai_models(const config& cfg, const public_api::http_executor& executor);
+        std::string get_kc_info(const config& cfg, const public_api::http_executor& executor);
         std::string list_running_models(const config& cfg, const public_api::http_executor& executor);
         std::string get_ollama_version(const config& cfg, const public_api::http_executor& executor);
         std::string show_model(const config& cfg, const public_api::http_executor& executor);
@@ -49,9 +51,15 @@ namespace hermit
         std::string decode_tg_tokens(const config&, const public_api::http_executor&);
         public_api::http_response_data make_api_request(const config&, const public_api::http_executor&);
         public_api::http_response_data make_api_request(const config&, const public_api::http_executor&, const filesystem::file_reader&);
+        public_api::http_stream_response_data StreamApiRequest(const config&, const public_api::http_stream_executor&,
+            const public_api::http_stream_handler&);
         std::string create_embeddings(const config& cfg, const public_api::http_executor& executor);
         std::string tokenize(const config& cfg, const public_api::http_executor& executor);
         std::string detokenize(const config& cfg, const public_api::http_executor& executor);
+        std::string convert_kc_json_to_grammar(const config& cfg, const public_api::http_executor& executor);
+        public_api::http_stream_response_data stream_kc_generation(const config& cfg,
+            const public_api::http_stream_executor& executor, const public_api::http_stream_handler& handler);
+        std::string manage_kc_generation(const config& cfg, const public_api::http_executor& executor);
         void init_chat_mode(config& cfg);
         std::vector<Item> parse_item_list(std::string_view str);
         void write_item_list(const config& cfg, std::string_view task);
