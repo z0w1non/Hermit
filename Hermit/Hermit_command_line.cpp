@@ -554,13 +554,16 @@ namespace Hermit
                     << "  Hermit messages create --backend lmstudio --llm.api-options <json> [options]\n"
                     << "  Hermit systemone create --backend lmstudio --llm.api-options <json> [options]\n"
                     << "  Hermit batch-chat create --backend vllm --llm.api-options <json> [options]\n"
+                    << "  Hermit moderations create --backend tg --llm.api-options <json> [options]\n"
+                    << "  Hermit health check --backend tg [options]\n"
                     << "  Hermit backend-api request --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama> --llm.api-path <path> [options]\n"
                     << "  Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata|system-stats|default-workflow|users|user-create|userdata-list|userdata-list-v2|userdata-get|userdata-put|userdata-delete|userdata-move|jobs|job|job-cancel|jobs-cancel> [options]\n"
                     << "  Hermit sd-api <request|routes|pending-tasks|internal-progress|quicksettings-hint|ping|profile-startup|sysinfo|sysinfo-download|progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|memory|scripts|script-info|extensions|refresh-embeddings|refresh-checkpoints|refresh-vae|unload-checkpoint|reload-checkpoint|server-kill|server-restart|server-stop> [options]\n"
                     << "  Hermit models <create|copy|delete|pull|push> --backend ollama --llm.model-action-options <json> [options]\n"
+                    << "  Hermit models info --backend tg [options]\n"
                     << "  Hermit embeddings create --backend <lmstudio|llama-cpp|vllm|ollama> --llm.model <model> [options]\n"
-                    << "  Hermit tokenize encode --backend llama-cpp [options]\n"
-                    << "  Hermit tokenize decode --backend llama-cpp --llm.token-ids <id...> [options]\n"
+                    << "  Hermit tokenize encode --backend <llama-cpp|tg> [options]\n"
+                    << "  Hermit tokenize decode --backend <llama-cpp|tg> --llm.token-ids <id...> [options]\n"
                     << "  Hermit png extract [options]\n\n"
                     << "設定ファイルの値よりコマンドラインの値が優先されます。\n\n"
                     << options_description << '\n';
@@ -662,7 +665,12 @@ namespace Hermit
                     return parse_result::program_options_error;
                 }
                 cfg.llm.backend_name = backend_iterator->second.as<std::string>();
-                if (action == "list" && cfg.llm.backend_name == "lmstudio")
+                if (action == "info" && cfg.llm.backend_name == "tg")
+                {
+                    cfg.llm.port = vm.at("llm.port").defaulted() ? "5000" : cfg.llm.port;
+                    cfg.command_mode = command_mode::get_tg_model_info;
+                }
+                else if (action == "list" && cfg.llm.backend_name == "lmstudio")
                 {
                     cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
                     if (cfg.llm.models_target.empty()) cfg.llm.models_target = "/api/v1/models";
@@ -851,6 +859,39 @@ namespace Hermit
                 cfg.llm.backend_name = "vllm";
                 cfg.llm.port = vm.at("llm.port").defaulted() ? "8000" : cfg.llm.port;
                 cfg.command_mode = command_mode::create_vllm_batch_chat;
+            }
+            else if (command == "moderations" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "create" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "tg")
+                {
+                    boost::nowide::cerr << "moderations create は --backend tg が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "moderations create には --llm.api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "tg";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "5000" : cfg.llm.port;
+                cfg.command_mode = command_mode::create_tg_moderations;
+            }
+            else if (command == "health" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "check" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "tg")
+                {
+                    boost::nowide::cerr << "health check は --backend tg が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "tg";
+                cfg.llm.port = vm.at("llm.port").defaulted() ? "5000" : cfg.llm.port;
+                cfg.command_mode = command_mode::check_tg_health;
             }
             else if (command == "backend-api" && action_iterator != vm.end())
             {
@@ -1100,16 +1141,17 @@ namespace Hermit
             {
                 const auto backend_iterator{ vm.find("backend") };
                 const std::string action{ action_iterator->second.as<std::string>() };
-                if (backend_iterator == vm.end() || backend_iterator->second.as<std::string>() != "llama-cpp")
+                if (backend_iterator == vm.end() || (backend_iterator->second.as<std::string>() != "llama-cpp"
+                    && backend_iterator->second.as<std::string>() != "tg"))
                 {
-                    boost::nowide::cerr << "tokenize には --backend llama-cpp が必要です。\n";
+                    boost::nowide::cerr << "tokenize には --backend llama-cpp または tg が必要です。\n";
                     return parse_result::program_options_error;
                 }
-                cfg.llm.backend_name = "llama-cpp";
-                cfg.llm.port = vm.at("llm.port").defaulted() ? "8080" : cfg.llm.port;
+                cfg.llm.backend_name = backend_iterator->second.as<std::string>();
+                cfg.llm.port = vm.at("llm.port").defaulted() ? (cfg.llm.backend_name == "tg" ? "5000" : "8080") : cfg.llm.port;
                 if (action == "encode")
                 {
-                    if (cfg.llm.tokenize_target.empty()) cfg.llm.tokenize_target = "/tokenize";
+                    if (cfg.llm.backend_name == "llama-cpp" && cfg.llm.tokenize_target.empty()) cfg.llm.tokenize_target = "/tokenize";
                     cfg.command_mode = command_mode::tokenize;
                 }
                 else if (action == "decode")
@@ -1119,7 +1161,7 @@ namespace Hermit
                         boost::nowide::cerr << "tokenize decode には --llm.token-ids が必要です。\n";
                         return parse_result::program_options_error;
                     }
-                    if (cfg.llm.detokenize_target.empty()) cfg.llm.detokenize_target = "/detokenize";
+                    if (cfg.llm.backend_name == "llama-cpp" && cfg.llm.detokenize_target.empty()) cfg.llm.detokenize_target = "/detokenize";
                     cfg.command_mode = command_mode::detokenize;
                 }
                 else

@@ -616,6 +616,144 @@ namespace Hermit
             return response.body;
         }
 
+        std::string create_tg_moderations(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ nlohmann::json::parse(cfg.llm.api_options) };
+            if (!body.is_object() || !body.contains("input"))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI moderation requires a non-empty input" });
+            }
+            const nlohmann::json& input{ body.at("input") };
+            const bool valid_input{ input.is_string() ? !input.get_ref<const std::string&>().empty()
+                : input.is_array() && !input.empty() && std::all_of(input.begin(), input.end(), [](const nlohmann::json& value)
+                {
+                    return value.is_string() && !value.get_ref<const std::string&>().empty();
+                }) };
+            if (!valid_input)
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI moderation input must be a non-empty string or array of non-empty strings" });
+            }
+            const std::size_t expected_result_count{ input.is_array() ? input.size() : 1U };
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/moderations", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("results") || !response_json.at("results").is_array()
+                || response_json.at("results").size() != expected_result_count
+                || std::any_of(response_json.at("results").begin(), response_json.at("results").end(), [](const nlohmann::json& result)
+                {
+                    return !result.is_object() || !result.contains("flagged") || !result.at("flagged").is_boolean()
+                        || !result.contains("categories") || !result.at("categories").is_object()
+                        || !result.contains("category_scores") || !result.at("category_scores").is_object();
+                }))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI moderation response must contain results with flagged, categories, and category_scores" });
+            }
+            return response.body;
+        }
+
+        std::string check_tg_health(const config& cfg, const public_api::http_executor& executor)
+        {
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/internal/health", {}, std::move(options)) };
+            request.method = public_api::http_method::get;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("status") || !response_json.at("status").is_string()
+                || response_json.at("status") != "ok")
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI health response must contain status 'ok'" });
+            }
+            return response.body;
+        }
+
+        std::string get_tg_model_info(const config& cfg, const public_api::http_executor& executor)
+        {
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/internal/model/info", {}, std::move(options)) };
+            request.method = public_api::http_method::get;
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("model_name") || !response_json.at("model_name").is_string()
+                || !response_json.contains("lora_names") || !response_json.at("lora_names").is_array()
+                || !std::all_of(response_json.at("lora_names").begin(), response_json.at("lora_names").end(), [](const nlohmann::json& name)
+                {
+                    return name.is_string();
+                }))
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI model info response must contain string model_name and string lora_names" });
+            }
+            return response.body;
+        }
+
+        std::string encode_tg_tokens(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ { "text", cfg.llm.prompt } };
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/internal/encode", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("tokens") || !response_json.at("tokens").is_array()
+                || !std::all_of(response_json.at("tokens").begin(), response_json.at("tokens").end(), [](const nlohmann::json& token)
+                {
+                    return token.is_number_integer();
+                }) || !response_json.contains("length") || !response_json.at("length").is_number_integer()
+                || response_json.at("length").get<std::size_t>() != response_json.at("tokens").size())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI encode response must contain integer tokens and matching length" });
+            }
+            return response.body;
+        }
+
+        std::string decode_tg_tokens(const config& cfg, const public_api::http_executor& executor)
+        {
+            const nlohmann::json body{ { "tokens", cfg.llm.token_ids } };
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, "/v1/internal/decode", body.dump(), std::move(options)) };
+            request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_object() || !response_json.contains("text") || !response_json.at("text").is_string())
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI decode response must contain string text" });
+            }
+            return response.body;
+        }
+
         public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor)
         {
             return make_api_request(cfg, executor, [](const std::filesystem::path& path, std::ios_base::openmode mode)

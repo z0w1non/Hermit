@@ -36,6 +36,11 @@ namespace Hermit
             const public_api::http_stream_executor&, const public_api::http_stream_handler&);
         std::string create_lmstudio_systemone(const config&, const public_api::http_executor&);
         std::string create_vllm_batch_chat(const config&, const public_api::http_executor&);
+        std::string create_tg_moderations(const config&, const public_api::http_executor&);
+        std::string check_tg_health(const config&, const public_api::http_executor&);
+        std::string get_tg_model_info(const config&, const public_api::http_executor&);
+        std::string encode_tg_tokens(const config&, const public_api::http_executor&);
+        std::string decode_tg_tokens(const config&, const public_api::http_executor&);
         public_api::http_response_data make_api_request(const config&, const public_api::http_executor&);
         public_api::http_response_data make_api_request(const config&, const public_api::http_executor&, const filesystem::file_reader&);
         std::string create_embeddings(const config& cfg, const public_api::http_executor& executor);

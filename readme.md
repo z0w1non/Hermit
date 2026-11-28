@@ -101,14 +101,32 @@ Hermit.exe messages create --backend lmstudio --llm.api-options '{"model":"ibm/g
 
 Jev (TypeSafe AI) System One endpoint は decision model ID と `state`、ID付き `questions` を JSON で指定します。
 
+```powershell
+Hermit.exe systemone create --backend lmstudio --llm.api-options '{"model":"decision-model","state":"I was charged twice.","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}'
+```
+
 vLLM の batch chat endpoint は複数 conversation を一度に送信します。streaming、tools は対象外です。
 
 ```powershell
 Hermit.exe batch-chat create --backend vllm --llm.api-options '{"model":"Qwen/Qwen2.5-1.5B-Instruct","messages":[[{"role":"user","content":"Capital of France?"}],[{"role":"user","content":"Capital of Japan?"}]]}'
 ```
 
+Text Generation Web UI の moderations endpoint は `moderations create` で使えます。`input` に文字列または文字列配列を指定してください。
+
 ```powershell
-Hermit.exe systemone create --backend lmstudio --llm.api-options '{"model":"decision-model","state":"I was charged twice.","questions":{"angry":{"type":"noul","instructions":"Is the customer angry?"}}}'
+Hermit.exe moderations create --backend tg --llm.api-options '{"input":"Example text to classify"}'
+```
+
+Text Generation Web UI の API 稼働状態は `health check` で確認できます。API key を指定した場合は Bearer token で送信します。
+
+```powershell
+Hermit.exe health check --backend tg
+```
+
+現在ロードされている Text Generation Web UI モデルと LoRA 名は `models info` で取得できます。
+
+```powershell
+Hermit.exe models info --backend tg
 ```
 
 未対応の HTTP API route は `backend-api request` で呼び出せます。例えば LM Studio Responses API は次のように実行します。
@@ -242,11 +260,13 @@ Hermit.exe models push --backend ollama --llm.model-action-options '{"model":"ac
 Hermit.exe models delete --backend ollama --llm.model-action-options '{"model":"custom-assistant"}'
 ```
 
-llama.cpp server の tokenization API は `tokenize encode` と `tokenize decode` で呼び出せます。encode は `/tokenize`、decode は `/detokenize` を使用します。`--llm.tokenize-options` で `add_special`、`parse_special`、`with_pieces` を JSON で渡せます。
+llama.cpp server と Text Generation Web UI の tokenization API は `tokenize encode` と `tokenize decode` で呼び出せます。llama.cpp は `/tokenize`・`/detokenize`、TG は `/v1/internal/encode`・`/v1/internal/decode` を使用します。`--llm.tokenize-options` は llama.cpp 用です。TG encode は `text` を送り、token ID と length を受け取り、decode は token ID 配列を送り、text を受け取ります。
 
 ```powershell
 Hermit.exe tokenize encode --backend llama-cpp --llm.prompt "Hello world" --llm.tokenize-options '{"with_pieces":true}'
 Hermit.exe tokenize decode --backend llama-cpp --llm.token-ids 123 456
+Hermit.exe tokenize encode --backend tg --llm.prompt "Hello world"
+Hermit.exe tokenize decode --backend tg --llm.token-ids 123 456
 ```
 
 ### AUTOMATIC1111 Stable Diffusion WebUI (`sd`)

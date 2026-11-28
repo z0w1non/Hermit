@@ -270,6 +270,9 @@ namespace Hermit
                 || cfg.command_mode == command_mode::create_lmstudio_messages
                 || cfg.command_mode == command_mode::create_lmstudio_systemone
                 || cfg.command_mode == command_mode::create_vllm_batch_chat
+                || cfg.command_mode == command_mode::create_tg_moderations
+                || cfg.command_mode == command_mode::check_tg_health
+                || cfg.command_mode == command_mode::get_tg_model_info
                 || cfg.command_mode == command_mode::request_llm_api
                 || cfg.command_mode == command_mode::create_embeddings
                 || cfg.command_mode == command_mode::tokenize || cfg.command_mode == command_mode::detokenize)
@@ -350,10 +353,15 @@ namespace Hermit
                     : cfg.command_mode == command_mode::create_lmstudio_messages ? llm::create_lmstudio_messages(cfg, executor)
                     : cfg.command_mode == command_mode::create_lmstudio_systemone ? llm::create_lmstudio_systemone(cfg, executor)
                     : cfg.command_mode == command_mode::create_vllm_batch_chat ? llm::create_vllm_batch_chat(cfg, executor)
+                    : cfg.command_mode == command_mode::create_tg_moderations ? llm::create_tg_moderations(cfg, executor)
+                    : cfg.command_mode == command_mode::check_tg_health ? llm::check_tg_health(cfg, executor)
+                    : cfg.command_mode == command_mode::get_tg_model_info ? llm::get_tg_model_info(cfg, executor)
                     : cfg.command_mode == command_mode::manage_comfyui_api ? cu::manage_api(cfg, executor)
                     : cfg.command_mode == command_mode::manage_sd_api ? sd::manage_api(cfg, executor)
                     : cfg.command_mode == command_mode::create_embeddings ? llm::create_embeddings(cfg, executor)
-                    : cfg.command_mode == command_mode::tokenize ? llm::tokenize(cfg, executor) : llm::detokenize(cfg, executor) };
+                    : cfg.command_mode == command_mode::tokenize ? (cfg.llm.backend_name == "tg"
+                        ? llm::encode_tg_tokens(cfg, executor) : llm::tokenize(cfg, executor))
+                    : cfg.llm.backend_name == "tg" ? llm::decode_tg_tokens(cfg, executor) : llm::detokenize(cfg, executor) };
                 if ((cfg.command_mode == command_mode::manage_comfyui_api && cu::api_returns_binary(cfg.cu))
                     || (cfg.command_mode == command_mode::manage_sd_api && cfg.sd.api_action == "sysinfo-download"))
                 {

@@ -399,6 +399,50 @@ TEST(parse_command_line, configures_vllm_batch_chat_create)
         Hermit::command_line::parse_result::program_options_error);
 }
 
+TEST(parse_command_line, configures_tg_moderations_create)
+{
+    commandline_args args{ "Hermit.exe", "moderations", "create", "--backend", "tg",
+        "--llm.api-options", R"({"input":"hello"})" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::create_tg_moderations);
+    EXPECT_EQ(cfg.llm.backend_name, "tg");
+    EXPECT_EQ(cfg.llm.port, "5000");
+    commandline_args unsupported{ "Hermit.exe", "moderations", "create", "--backend", "vllm",
+        "--llm.api-options", R"({"input":"hello"})" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_tg_health_check)
+{
+    commandline_args args{ "Hermit.exe", "health", "check", "--backend", "tg" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::check_tg_health);
+    EXPECT_EQ(cfg.llm.backend_name, "tg");
+    EXPECT_EQ(cfg.llm.port, "5000");
+    commandline_args unsupported{ "Hermit.exe", "health", "check", "--backend", "ollama" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
+TEST(parse_command_line, configures_tg_model_info)
+{
+    commandline_args args{ "Hermit.exe", "models", "info", "--backend", "tg" };
+    Hermit::config cfg;
+    EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, Hermit::command_mode::get_tg_model_info);
+    EXPECT_EQ(cfg.llm.backend_name, "tg");
+    EXPECT_EQ(cfg.llm.port, "5000");
+    commandline_args unsupported{ "Hermit.exe", "models", "info", "--backend", "ollama" };
+    Hermit::config unsupported_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unsupported.argc(), unsupported.argv(), unsupported_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
 TEST(parse_command_line, rejects_model_list_for_unsupported_backends)
 {
     commandline_args args{ "Hermit.exe", "models", "list", "--backend", "tg" };
@@ -689,6 +733,20 @@ TEST(parse_command_line, configures_llama_cpp_tokenize_and_detokenize)
     EXPECT_EQ(decode_cfg.command_mode, Hermit::command_mode::detokenize);
     EXPECT_EQ(decode_cfg.llm.detokenize_target, "/detokenize");
     EXPECT_EQ(decode_cfg.llm.token_ids, (std::vector<int>{ 5, 6 }));
+
+    commandline_args tg_encode_args{ "Hermit.exe", "tokenize", "encode", "--backend", "tg", "--llm.prompt", "hello" };
+    Hermit::config tg_encode_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(tg_encode_args.argc(), tg_encode_args.argv(), tg_encode_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(tg_encode_cfg.llm.port, "5000");
+    EXPECT_EQ(tg_encode_cfg.llm.backend_name, "tg");
+    EXPECT_EQ(tg_encode_cfg.command_mode, Hermit::command_mode::tokenize);
+
+    commandline_args tg_decode_args{ "Hermit.exe", "tokenize", "decode", "--backend", "tg", "--llm.token-ids", "5", "6" };
+    Hermit::config tg_decode_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(tg_decode_args.argc(), tg_decode_args.argv(), tg_decode_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(tg_decode_cfg.llm.port, "5000");
+    EXPECT_EQ(tg_decode_cfg.llm.backend_name, "tg");
+    EXPECT_EQ(tg_decode_cfg.command_mode, Hermit::command_mode::detokenize);
 
     commandline_args unsupported_args{ "Hermit.exe", "tokenize", "encode", "--backend", "ollama" };
     Hermit::config unsupported_cfg;

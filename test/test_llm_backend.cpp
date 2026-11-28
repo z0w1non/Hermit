@@ -606,6 +606,104 @@ TEST(llm_backend_parameters, rejects_invalid_vllm_batch_chat_request_or_response
     EXPECT_THROW(Hermit::llm::create_vllm_batch_chat(cfg, wrong_count), Hermit::command_line_exception);
 }
 
+TEST(llm_backend_parameters, sends_tg_moderation_request_and_validates_results)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "test-key";
+    cfg.llm.api_options = R"({"input":["first text","second text"]})";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/moderations");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer test-key");
+        EXPECT_EQ(nlohmann::json::parse(request.body).at("input").size(), 2U);
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"id":"moderation-1","model":"textgen","results":[{"flagged":false,"categories":{"hate":false},"category_scores":{"hate":0.01}},{"flagged":true,"categories":{"hate":true},"category_scores":{"hate":0.91}}]})",
+            "application/json" };
+    } };
+    EXPECT_NE(Hermit::llm::create_tg_moderations(cfg, executor).find("moderation-1"), std::string::npos);
+}
+
+TEST(llm_backend_parameters, rejects_invalid_tg_moderation_request_or_response)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor unused_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid moderation input must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"({"results":[]})" };
+    } };
+    for (const std::string options : { "[]", "{}", R"({"input":""})", R"({"input":[]})",
+        R"({"input":["ok",2]})", R"({"input":[""]})" })
+    {
+        cfg.llm.api_options = options;
+        EXPECT_THROW(Hermit::llm::create_tg_moderations(cfg, unused_executor), Hermit::command_line_exception) << options;
+    }
+    cfg.llm.api_options = R"({"input":"test"})";
+    for (const std::string response : { "{}", R"({"results":[]})", R"({"results":[{}]})",
+        R"({"results":[{"flagged":"false","categories":{},"category_scores":{}}]})" })
+    {
+        const Hermit::public_api::http_executor invalid_response{ [&response](const Hermit::public_api::http_request_data&)
+        {
+            return Hermit::public_api::http_response_data{ 200, response };
+        } };
+        EXPECT_THROW(Hermit::llm::create_tg_moderations(cfg, invalid_response), Hermit::command_line_exception) << response;
+    }
+}
+
+TEST(llm_backend_parameters, checks_tg_health_and_validates_status)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "health-key";
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/v1/internal/health");
+        EXPECT_EQ(request.options.authorization, "Bearer health-key");
+        return Hermit::public_api::http_response_data{ 200, R"({"status":"ok"})", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::check_tg_health(cfg, executor), R"({"status":"ok"})");
+
+    const Hermit::public_api::http_executor invalid_response{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"status":"starting"})" };
+    } };
+    EXPECT_THROW(Hermit::llm::check_tg_health(cfg, invalid_response), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, reads_and_validates_tg_current_model_info)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.api_key = "model-info-key";
+    cfg.timeout_connect = 3;
+    cfg.timeout_request = 11;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/v1/internal/model/info");
+        EXPECT_EQ(request.body, "");
+        EXPECT_EQ(request.options.authorization, "Bearer model-info-key");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 3 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 11 });
+        return Hermit::public_api::http_response_data{ 200,
+            R"({"model_name":"ExampleModel","lora_names":["style-a","style-b"]})", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::get_tg_model_info(cfg, executor),
+        R"({"model_name":"ExampleModel","lora_names":["style-a","style-b"]})");
+
+    const Hermit::public_api::http_executor invalid_response{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"model_name":"ExampleModel","lora_names":[1]})" };
+    } };
+    EXPECT_THROW(Hermit::llm::get_tg_model_info(cfg, invalid_response), Hermit::command_line_exception);
+}
+
 TEST(llm_backend_parameters, sends_generic_backend_api_request_with_method_body_auth_and_headers)
 {
     Hermit::config cfg;
@@ -812,6 +910,54 @@ TEST(llm_backend_parameters, detokenizes_token_ids_and_rejects_http_errors)
         return Hermit::public_api::http_response_data{ 500, "failure" };
     } };
     EXPECT_THROW(Hermit::llm::detokenize(cfg, error_executor), Hermit::http_status_exception);
+}
+
+TEST(llm_backend_parameters, encodes_and_decodes_text_generation_web_ui_tokens)
+{
+    Hermit::config cfg;
+    cfg.llm.host = "tg-host";
+    cfg.llm.port = "5000";
+    cfg.llm.prompt = "hello";
+    cfg.llm.api_key = "tg-key";
+    cfg.llm.token_ids = { 7, 8 };
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 9;
+    const Hermit::public_api::http_executor encode_executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/v1/internal/encode");
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer tg-key");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 9 });
+        EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json({ { "text", "hello" } }));
+        return Hermit::public_api::http_response_data{ 200, R"({"tokens":[7,8],"length":2})", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::encode_tg_tokens(cfg, encode_executor), R"({"tokens":[7,8],"length":2})");
+
+    const Hermit::public_api::http_executor decode_executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.target, "/v1/internal/decode");
+        EXPECT_EQ(nlohmann::json::parse(request.body), nlohmann::json({ { "tokens", { 7, 8 } } }));
+        return Hermit::public_api::http_response_data{ 200, R"({"text":"hello"})", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::decode_tg_tokens(cfg, decode_executor), R"({"text":"hello"})");
+}
+
+TEST(llm_backend_parameters, rejects_malformed_text_generation_web_ui_token_responses)
+{
+    Hermit::config cfg;
+    const Hermit::public_api::http_executor invalid_encode{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"tokens":[1],"length":2})" };
+    } };
+    EXPECT_THROW(Hermit::llm::encode_tg_tokens(cfg, invalid_encode), Hermit::command_line_exception);
+
+    const Hermit::public_api::http_executor invalid_decode{ [](const Hermit::public_api::http_request_data&)
+    {
+        return Hermit::public_api::http_response_data{ 200, R"({"tokens":[1]})" };
+    } };
+    EXPECT_THROW(Hermit::llm::decode_tg_tokens(cfg, invalid_decode), Hermit::command_line_exception);
 }
 
 TEST(llm_backend_parameters, embedding_requires_model_and_rejects_http_errors)

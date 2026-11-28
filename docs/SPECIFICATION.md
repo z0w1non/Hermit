@@ -107,7 +107,7 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/Hermit_png.cpp` | PNG署名・IHDR・chunk長を検証してtEXtメタデータを挿入・抽出。 |
 | `Hermit/Hermit_tcp.cpp` | TCP 接続確認とサーバー待機。 |
 | `Hermit/Hermit_filesystem.cpp` | ファイル読み書き、パス解決、プロンプトファイル処理。 |
-| `Hermit/Hermit_llm.cpp` | Completions/Chat Completions、LM Studio native chat/Responses/Decisions/Anthropic Messages/Jev System One、vLLM batch chat、モデル・embedding・token count、Ollama/LM Studio model lifecycle、会話履歴。 |
+| `Hermit/Hermit_llm.cpp` | Completions/Chat Completions、Text Generation Web UI moderation/health/token encode/decode、LM Studio native chat/Responses/Decisions/Anthropic Messages/Jev System One、vLLM batch chat、モデル・embedding・token count、Ollama/LM Studio model lifecycle、会話履歴。 |
 | `Hermit/Hermit_sd.cpp` | Stable Diffusion の画像生成要求、定型 API および汎用 JSON/raw HTTP API 呼び出し。 |
 | `Hermit/Hermit_sb.cpp` | Style-Bert-VITS2 の音声生成要求。 |
 | `Hermit/Hermit_cu.cpp` | ComfyUI の画像アップロード、prompt、queue/control/history、WebSocket `/ws` event stream API。 |
@@ -275,10 +275,13 @@ Hermit decisions create --backend lmstudio --llm.api-options <json> [options]
 Hermit messages create --backend lmstudio --llm.api-options <json> [options]
 Hermit systemone create --backend lmstudio --llm.api-options <json> [options]
 Hermit batch-chat create --backend vllm --llm.api-options <json> [options]
+Hermit moderations create --backend tg --llm.api-options <json> [options]
+Hermit health check --backend tg [options]
+Hermit models info --backend tg [options]
 Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata|system-stats|default-workflow|prompt-status|workflow-templates|template-file|i18n|web-ui|users|user-create|userdata-list|userdata-list-v2|userdata-get|userdata-put|userdata-delete|userdata-move|jobs|job|job-cancel|jobs-cancel> [options]
 Hermit sd-api <progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|refresh-embeddings|refresh-checkpoints|refresh-vae|memory|scripts|script-info|extensions|unload-checkpoint|reload-checkpoint|server-kill|server-restart|server-stop> [options]
 Hermit embeddings create --backend <lmstudio|llama-cpp|vllm|ollama> --llm.model <model> [options]
-Hermit tokenize <encode|decode> --backend llama-cpp [options]
+Hermit tokenize <encode|decode> --backend <llama-cpp|tg> [options]
 ```
 
 `--mode` と旧フラット形式のオプション名は廃止しました。設定オプションは `--namespace.property value`、INI キーは `namespace.property = value` とします。短縮形は `-h`（`--help`）のみです。CLI 値は設定ファイルより優先されます。
@@ -357,6 +360,7 @@ Hermit tokenize <encode|decode> --backend llama-cpp [options]
 | `models show --backend ollama` | Ollama の `/api/show` で指定モデルの詳細を取得して JSON を出力 |
 | `models running --backend ollama` | Ollama の `/api/ps` で稼働中モデル一覧を取得して JSON を出力 |
 | `models version --backend ollama` | Ollama の `/api/version` でサーバーバージョンを取得して JSON を出力 |
+| `models info --backend tg` | Text Generation Web UI `/v1/internal/model/info` から現在のモデル名と LoRA 名を取得し、JSON を出力 |
 | `models create|copy|delete|pull|push --backend ollama` | Ollama の model lifecycle API を呼び、JSON/NDJSON 応答を標準出力へ出力 |
 | `models load|unload|download|download-status --backend lmstudio` | LM Studio native REST のモデル管理・download status API を呼び、JSON 応答を標準出力へ出力 |
 | `responses create --backend lmstudio` | LM Studio `POST /v1/responses` へ model/input を含む JSON を送り、通常は response object、`stream:true` では受信 SSE bytes を逐次標準出力へ出力 |
@@ -365,10 +369,14 @@ Hermit tokenize <encode|decode> --backend llama-cpp [options]
 | `messages create --backend lmstudio` | LM Studio Anthropic-compatible `POST /v1/messages` へ Messages JSON を送り、message JSON または `stream:true` の SSE events を標準出力へ出力 |
 | `systemone create --backend lmstudio` | LM Studio Jev-compatible `POST /v1/systemone` へ model/state/questions JSON を送り、question ID 対応の answers JSON を標準出力へ出力 |
 | `batch-chat create --backend vllm` | vLLM `POST /v1/chat/completions/batch` へ複数 conversation を送り、conversation ごとの choices JSON を標準出力へ出力 |
+| `moderations create --backend tg` | Text Generation Web UI `POST /v1/moderations` へ input を送り、moderation results JSON を標準出力へ出力 |
+| `health check --backend tg` | Text Generation Web UI `GET /v1/internal/health` を呼び、health JSON を標準出力へ出力 |
 | `backend-api request --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama>` | 任意 backend HTTP route へ method/path と JSON または raw body、Content-Type、追加 header を送り、JSON/text または binary response を出力 |
 | `embeddings create --backend lmstudio|llama-cpp|vllm|ollama` | 指定した LLM server の embeddings API を呼び出し、応答 JSON を標準出力へ出力 |
 | `tokenize encode --backend llama-cpp` | llama.cpp の `/tokenize` へテキストと tokenizer option を送り、token JSON を標準出力へ出力 |
 | `tokenize decode --backend llama-cpp` | llama.cpp の `/detokenize` へ token ID を送り、テキスト JSON を標準出力へ出力 |
+| `tokenize encode --backend tg` | Text Generation Web UI の `/v1/internal/encode` へ text を送り、token ID と長さの JSON を標準出力へ出力 |
+| `tokenize decode --backend tg` | Text Generation Web UI の `/v1/internal/decode` へ token ID を送り、text の JSON を標準出力へ出力 |
 | `server start` | サーバープロセスを起動し、指定 TCP ポートへの接続を待機 |
 | `server stop` | 実行ファイル名またはフルパスに一致するプロセスを終了 |
 | `png extract` | PNG ファイルから生成パラメーターを抽出して標準出力へ出力 |
@@ -404,7 +412,7 @@ Hermit tokenize <encode|decode> --backend llama-cpp [options]
 | オプション名 | 省略形 | デフォルト値 | 機能 |
 | --- | --- | --- | --- |
 | `--help` | `-h` | — | ヘルプを表示する。 |
-| `--backend` | — | — | `generate`、`models`、`lmstudio-chat create`、`responses create`、`decisions create`、`messages create`、`systemone create`、`batch-chat create`、`embeddings create`、`tokenize` の backend を選択する。 |
+| `--backend` | — | — | `generate`、`models`、`lmstudio-chat create`、`responses create`、`decisions create`、`messages create`、`systemone create`、`batch-chat create`、`moderations create`、`health check`、`embeddings create`、`tokenize` の backend を選択する。 |
 | `--path.base` | — | `.` | 相対パスの基準ディレクトリを指定する。 |
 | `--logging.level` | — | `info` | 記録する最低ログレベルを指定する。 |
 | `--logging.file` | — | `log` | ログファイルを指定する。 |
@@ -447,7 +455,7 @@ Hermit tokenize <encode|decode> --backend llama-cpp [options]
 | `--llm.api-key` | — | Bearer 認証に使う API key を指定する。 |
 | `--llm.api-method` | `GET` | `backend-api request` の HTTP method。GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS を指定する。 |
 | `--llm.api-path` | `/` | `backend-api request` の `/` 始まりの route path。authority、fragment、traversal、空白を含められない。 |
-| `--llm.api-options` | — | `backend-api request` の JSON object/array body。 |
+| `--llm.api-options` | — | `backend-api request` や endpoint 固有コマンドの JSON body。 |
 | `--llm.api-body-file` | — | `backend-api request` の raw/binary body file。`--llm.api-options` と併用できない。 |
 | `--llm.api-content-type` | — | `backend-api request` の body Content-Type。multipart では boundary を含める。 |
 | `--llm.api-headers` | — | `backend-api request` の追加 HTTP header を JSON string map で指定する。Host、Content-Length、Transfer-Encoding、Connection、Content-Type は指定できない。 |
@@ -906,7 +914,7 @@ name                  = identifier ;
 | [ISS-032](ISSUES.md) | 低 | sandbox loopback test の残留 process が test.exe をロックした。 | 解決済み。PID 37232 を特定・終了して既定名 relink 成功。loopback test に時間上限と process 回収を必須化。 |
 | [ISS-028](ISSUES.md) | 低 | test.pdb の別プロセス保持時に C1041 が起きる。 | 継続管理。再発時に保持プロセスと PID を記録する。 |
 | [ISS-029](ISSUES.md) | 高 | Hermit app 差分リンクで LNK1103 が発生していた。 | 解決済み。full LTCG の差分リンク成功を維持・監視する。 |
-| [ISS-030](ISSUES.md) | 高 | 対象バックエンド全 Web API の対応が未完了。 | 進行中。LM Studio Anthropic Messages JSON/SSE、Jev System One JSON、vLLM batch chat JSON を契約テスト付きで追加。Release x64 solution Build成功。network-free 247/247 tests、loopback 9/9 tests成功。実 server 確認と未対応操作は引き続き追跡。公式操作一覧は [BACKEND_WEB_API_COVERAGE.md](BACKEND_WEB_API_COVERAGE.md) で追跡する。 |
+| [ISS-030](ISSUES.md) | 高 | 対象バックエンド全 Web API の対応が未完了。 | 進行中。LM Studio Anthropic Messages JSON/SSE、Jev System One JSON、vLLM batch chat JSON、TG moderation/health/token encode/decode を契約テスト付きで追加。2026-11-28 VS18 Release x64 solution Build 成功（警告0・エラー0）。TG/tokenize focused 5/5、全263/263 tests成功（loopback 9件を含む）。実 server 確認と未対応操作は引き続き追跡。公式操作一覧は [BACKEND_WEB_API_COVERAGE.md](BACKEND_WEB_API_COVERAGE.md) で追跡する。 |
 | [ISS-031](ISSUES.md) | 中 | CLI ヘルプとオプション資料に誤記があり、SD の seed resize 名が重複していた。 | 解決済み。共通名を維持し、img2img 専用名を分離。ヘルプ・資料と回帰テストを更新した。 |
 | [ISS-033](ISSUES.md) | 中 | CLI がフラットな `--mode` とハイフン連結オプションに依存する。 | 解決済み。サブコマンド、`--namespace.property`、dotted INI key へ置換し、旧構文を拒否する。 |
 

@@ -17,7 +17,8 @@ namespace Hermit
     {
         tg, kc, lmstudio, llama_cpp, vllm, ollama, sd, sb, cu, list_models, list_running_models, show_model, get_ollama_version,
         manage_ollama_model, manage_lmstudio_model, create_lmstudio_chat, create_lmstudio_response, create_lmstudio_decision,
-        create_lmstudio_messages, create_lmstudio_systemone, create_vllm_batch_chat,
+        create_lmstudio_messages, create_lmstudio_systemone, create_vllm_batch_chat, create_tg_moderations, check_tg_health,
+        get_tg_model_info,
         manage_comfyui_api, manage_sd_api, request_sd_api, request_llm_api,
         create_embeddings, tokenize, detokenize,
         extract_png_parameters, create_process, terminate_process
