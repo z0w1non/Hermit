@@ -1,6 +1,6 @@
 # Hermit
 
-[日本語](readme.md) | [English](docs/README/en/README.md)
+言語: 日本語 | [English](docs/README/en/README.md)
 
 Hermit は、Windows 上で動作する C++20 の CLI アプリケーションです。テキスト・画像・音声の生成バックエンドをコマンドラインから利用し、プロンプトのテンプレート展開、反復実行、生成結果の保存を行います。
 

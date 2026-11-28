@@ -1,6 +1,6 @@
 # Hermit
 
-[日本語](../../../readme.md) | [English](README.md)
+Language: [日本語](../../../readme.md) | English
 
 Hermit is a C++20 command-line application for Windows. It connects to text, image, and speech generation backends, expands prompt templates, runs iterative workflows, and saves generated output.
 
