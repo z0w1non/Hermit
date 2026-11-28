@@ -450,8 +450,7 @@ namespace hermit
             });
         }
 
-        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor,
-            const filesystem::file_reader& reader)
+        static public_api::http_request_data BuildApiRequestData(const config& cfg, const filesystem::file_reader& reader)
         {
             using public_api::http_method;
             http_method method;
@@ -555,8 +554,29 @@ namespace hermit
                     request.headers.emplace(name, header_value);
                 }
             }
+            return request;
+        }
+
+        public_api::http_response_data make_api_request(const config& cfg, const public_api::http_executor& executor,
+            const filesystem::file_reader& reader)
+        {
+            const public_api::http_request_data request{ BuildApiRequestData(cfg, reader) };
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
+            return response;
+        }
+
+        public_api::http_stream_response_data StreamApiRequest(const config& cfg,
+            const public_api::http_stream_executor& executor, const public_api::http_stream_handler& handler)
+        {
+            if (!executor || !handler) throw std::invalid_argument{ "sd-api stream executor and handler are required" };
+            const filesystem::file_reader reader{ [](const std::filesystem::path& path, std::ios_base::openmode mode)
+            {
+                return filesystem::read_file_to_string(path, mode);
+            } };
+            const public_api::http_request_data request{ BuildApiRequestData(cfg, reader) };
+            const public_api::http_stream_response_data response{ executor(request, handler) };
+            public_api::ensure_success({ response.status_code, {}, response.content_type, false });
             return response;
         }
     } // namespace sd

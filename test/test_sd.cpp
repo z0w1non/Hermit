@@ -338,6 +338,54 @@ TEST(sd, supports_binary_api_request_body_headers_and_response)
     EXPECT_TRUE(response.is_binary);
 }
 
+TEST(sd, streams_generic_api_response_chunks_and_preserves_request_contract)
+{
+    hermit::config cfg;
+    cfg.sd.host = "sd-host";
+    cfg.sd.port = "7860";
+    cfg.sd.api_method = "POST";
+    cfg.sd.api_path = "/extension/events";
+    cfg.sd.api_options = R"({"stream":true})";
+    cfg.sd.api_content_type = "application/json";
+    cfg.sd.api_headers = R"({"X-Trace":"trace-1"})";
+    std::string streamed;
+    const hermit::public_api::http_stream_handler handler{ [&](std::string_view chunk)
+    {
+        streamed.append(chunk);
+        return true;
+    } };
+    const hermit::public_api::http_stream_executor executor{ [&](const hermit::public_api::http_request_data& request,
+        const hermit::public_api::http_stream_handler& response_handler)
+    {
+        EXPECT_EQ(request.host, "sd-host");
+        EXPECT_EQ(request.port, "7860");
+        EXPECT_EQ(request.method, hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/extension/events");
+        EXPECT_EQ(request.body, R"({"stream":true})");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.headers.at("X-Trace"), "trace-1");
+        EXPECT_TRUE(response_handler("data: {\"n\":1}\n\n"));
+        EXPECT_TRUE(response_handler("data: [DONE]\n\n"));
+        return hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    } };
+
+    const hermit::public_api::http_stream_response_data response{ hermit::sd::StreamApiRequest(cfg, executor, handler) };
+    EXPECT_EQ(response.status_code, 200);
+    EXPECT_EQ(response.content_type, "text/event-stream");
+    EXPECT_EQ(streamed, "data: {\"n\":1}\n\ndata: [DONE]\n\n");
+}
+
+TEST(sd, rejects_stream_api_without_executor_or_handler)
+{
+    hermit::config cfg;
+    cfg.sd.api_path = "/extension/events";
+    EXPECT_THROW(hermit::sd::StreamApiRequest(cfg, {}, [](std::string_view) { return true; }), std::invalid_argument);
+    EXPECT_THROW(hermit::sd::StreamApiRequest(cfg, [](const hermit::public_api::http_request_data&, const hermit::public_api::http_stream_handler&)
+    {
+        return hermit::public_api::http_stream_response_data{ 200, "text/event-stream" };
+    }, {}), std::invalid_argument);
+}
+
 TEST(sd, rejects_invalid_generic_api_request_metadata_without_sending)
 {
     hermit::config cfg;

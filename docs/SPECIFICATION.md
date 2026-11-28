@@ -60,13 +60,13 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/builtin.hpp` | 組み込みマクロ、macro context、file reader / environment / process runner / generated・summary LLM HTTP executor の注入 API。 |
 | `Hermit/http.hpp` | URL パラメーター設定テンプレート。 |
 | `Hermit/llm.hpp` | LLM の生成、モデル一覧・embedding・model lifecycle・汎用 HTTP streaming API、会話、段落、コードブロック処理 API。 |
-| `Hermit/generation.hpp` | Stable Diffusion の生成と progress/interrogate/control/generic HTTP API、Style-Bert-VITS2、ComfyUI の生成 API。Style-Bert-VITS2 の GET/POST 音声生成、モデル一覧・更新・状態・G2P・WAV取得 API、ComfyUI の queue/control/history/object-info/upload/WebSocket event API・`generated_file_info`・HTTP/file reader/binary storage 注入、SD 画像/body reader 注入境界を公開。 |
+| `Hermit/generation.hpp` | Stable Diffusion の生成と progress/interrogate/control/generic HTTP API・raw streaming API、Style-Bert-VITS2、ComfyUI の生成 API。Style-Bert-VITS2 の GET/POST 音声生成、モデル一覧・更新・状態・G2P・WAV取得 API、ComfyUI の queue/control/history/object-info/upload/WebSocket event API・`generated_file_info`・HTTP/file reader/binary storage 注入、SD 画像/body reader 注入境界を公開。 |
 | `Hermit/log.hpp` | severity・初期化 API、ログマクロ、差し替え可能なログ stream factory。sink・書式実装ヘッダーは `.cpp` に限定。 |
 | `Hermit/log_types.hpp` | Boost.Log に依存しない severity 型。実行時設定が保持するログレベル境界。 |
 | `Hermit/runtime.hpp` | phase、反復、seed、プロセス制御、差し替え可能な port connector・process launcher・process terminator・生成物 writer・SD/SB HTTP executor と画像 reader、アプリケーション実行 API。 |
 | `Hermit/core.hpp` | コマンド・モード変換、値文字列化、基盤処理の公開宣言。 |
 | `Hermit/png.hpp` | PNG tEXt パラメーター抽出 API。 |
-| `Hermit/app_types.hpp` | 段落項目とアプリケーション実行モード（model list/info、embeddings、tokenize、汎用 HTTP request/stream、Stable Diffusion の定型・汎用 API request、ComfyUI queue/control/history/object-info/WebSocket event command を含む）。 |
+| `Hermit/app_types.hpp` | 段落項目とアプリケーション実行モード（model list/info、embeddings、tokenize、汎用 HTTP request/stream、Stable Diffusion の定型 API・汎用 request/stream、ComfyUI queue/control/history/object-info/WebSocket event command を含む）。 |
 | `Hermit/lru.hpp` | トークン数 LRU キャッシュの型と API。 |
 | `Hermit/lru_impl.hpp` | LRU のテンプレート実体と CBOR ファイル永続化。設定・filesystem・ログに依存する非公開実装境界。reader/writer callback で保存と復元を差し替え可能。 |
 | `Hermit/templates.hpp` | 乱数、unwrap、値変換、variant 取得の共通テンプレート。 |
@@ -111,7 +111,7 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/tcp.cpp` | TCP 接続確認とサーバー待機。 |
 | `Hermit/filesystem.cpp` | ファイル読み書き、パス解決、プロンプトファイル処理。 |
 | `Hermit/llm.cpp` | Completions/Chat Completions、汎用 HTTP request/stream、Text Generation Web UI moderation/health/Anthropic Messages/current model info/admin model list/load/unload/token encode/decode、LM Studio native chat/Responses/Decisions/Anthropic Messages/Jev System One、vLLM batch chat、モデル・embedding・token count、Ollama/LM Studio model lifecycle、会話履歴。 |
-| `Hermit/sd.cpp` | Stable Diffusion の画像生成要求、定型 API および汎用 JSON/raw HTTP API 呼び出し。 |
+| `Hermit/sd.cpp` | Stable Diffusion の画像生成要求、定型 API および汎用 JSON/raw HTTP request・response streaming 呼び出し。 |
 | `Hermit/sb.cpp` | Style-Bert-VITS2 の音声生成要求。 |
 | `Hermit/cu.cpp` | ComfyUI の画像アップロード、prompt、queue/control/history、WebSocket `/ws` event stream API。 |
 | `Hermit/command_line.cpp` | Boost.Program_options による CLI オプション解析。ComfyUI object-info を含む。 |
@@ -119,7 +119,7 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/string_extra.cpp` | 追加の文字列整形・エンコード処理。 |
 | `Hermit/log.cpp` | ログ出力とログレベル制御。 |
 | `Hermit/process.cpp` | サーバープロセスの起動・終了。 |
-| `Hermit/iteration.cpp` | モード実行、seed、phase、反復制御、ComfyUI WebSocket dispatch、汎用 API binary response の stdout 出力、例外安全な main。 |
+| `Hermit/iteration.cpp` | モード実行、seed、phase、反復制御、ComfyUI WebSocket dispatch、汎用 API binary response と SD/API raw stream の stdout 出力、例外安全な main。 |
 | `Hermit/main.cpp` | Windows エントリーポイント。 |
 | `test/test.cpp` | Google Test のテストケース。 |
 | `test/test_support.hpp` | テスト共通ヘルパー、出力リダイレクタ、Mock 型。 |
@@ -129,12 +129,12 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `test/test_llm.cpp` | LLM の純粋な Markdown・項目リスト変換テスト。 |
 | `test/test_cu.cpp` | ComfyUI multipart 要求生成、queue/control/history/object-info/models/embeddings/extensions/features/upload-image/upload-mask/view/metadata と WebSocket event stream 契約テスト。 |
 | `test/test_sb.cpp` | Style-Bert-VITS2 の URL・transport テスト。 |
-| `test/test_sd.cpp` | Stable Diffusion の要求生成・PNG パラメーター・HTTP method/path/header/raw body・binary response 契約テスト。 |
+| `test/test_sd.cpp` | Stable Diffusion の要求生成・PNG パラメーター・HTTP method/path/header/raw body・binary response・generic response streaming 契約テスト。 |
 | `test/test_tcp.cpp` | TCP transport 注入・Content-Type からの text/binary response 判定テスト。 |
 | `test/test_llm_backend.cpp` | TG／Kobold backend の要求・応答、Chat 形式、共通モック契約のテスト。 |
 | `Hermit/HermitLib.vcxproj` | Hermit 実装を Static Library としてビルドする共通ライブラリプロジェクト。 |
 
-現在の単体テストは 298 件（29 テストスイート、2026-11-28 の最新全件検証）で、CLI の既定値・共通/バックエンド別オプション反映・`--kc-bypass-eos` と `trim_stop` の独立性・不正モードエラー、例外安全なエントリーポイント、LRU、context の継承・上書き・型変換・optional取得・親値参照、phase 境界、文字列・filesystem の text/binary 入出力、親ディレクトリ作成、prompt 優先順位、書き込み失敗、画像 Base64/MIME と未知拡張子・不存在エラー、ログseverity変換、PNG署名・chunk境界・metadata key不在、Base64不正入力と閾値境界、組み込みマクロの registry、型変換、型不一致時の callback 未呼出、generated/summary の completion/token-count executor 成功と HTTP 失敗伝播、summary の max_tokens context と reasoning 除去・上限切り詰め、JSON エスケープ、コードブロック抽出とファイル名のパストラバーサル防止、パス操作、既定引数の乱数境界、exec マクロの既定拒否・明示許可、依存注入された環境 accessor／random source／process runner／file reader／port resolver・connector・waiter／process launcher・terminator と process runner の終了コード・失敗契約、全 command mode、LLM/SD の API ターゲット解決、LLM 共通バックエンド境界の Mock 契約、HTTP transport と各 request executor の Mock 契約、LLM completion/token-count の runtime HTTP/TCP 注入成功と HTTP status 失敗伝播、SD/LLM/ComfyUI runtime writer failure 伝播、既定 TCP transport を使う LLM/SD/SB/ComfyUI overload の loopback 通信、SB writer 失敗伝播、ComfyUI 履歴 URL/JSON・queue/control/history/users/userdata query/path/header/binary/204・jobs list/detail/cancellation query/path/body・object-info/models/embeddings/extensions/features/image-mask multipart/view/metadata/system-stats/default-workflow/prompt/template list/template file/i18n/web UI API contract・WebSocket text/binary event stream forwarding・storage 注入・サブディレクトリ保持・sanitize・traversal 拒否、TCP JSON 要求のmethod・header・body・128 MiBを超える HTTP 応答 body の拒否・全 backend 注入 executor の非成功 status 例外、Stable Diffusion API の progress/interrogate/control/Extras/PNG-info/options/list/refresh/create/train/memory/script/checkpoint/OpenAPI/internal API contract・任意 JSON method/path request・HTTP method adapter・txt2img/img2img dynamic field forwarding、img2img の複数画像・mask・latent mask の Base64 要求と欠落ファイル失敗、各生成バックエンドの要求・応答解析、LLM のコードブロック・推論除去・項目リスト解析、公開parserの式 AST 評価・組み込みマクロ評価・再帰停止・条件式分岐・論理条件評価・演算子優先順位と重複token境界、マクロ変数・関数引数・ネスト・区切り記号不整合の解析、Qi 属性変換とplaceholder候補のbacktracking、予約語と識別子境界、代入・増減・statement構文の拒否、非テンプレート parse/evaluate 境界、公開モード変換、user-defined variable の区切り・重複キー、設定 stream の値反映・CLI 優先順位・不正値を検証します。実験的な式statementは `HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS`、単独代入は `HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS`、複合代入は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS`、複合文は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS`、if/elseは `HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS`、whileは `HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS`、前置/後置増減式は `HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT`、全statement統合はStage 1–7 flagと `HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS` を併用した時のみ有効です。Stage 8実験構成は128 tests / 25 suites、当時の既定構成は120 tests / 27 suites、2026-11-28の最新通常構成は298 tests / 29 suitesで検証しています。実験構文は既定構成には含めません。LLM、SD、SB、ComfyUI の既存 runtime overload は loopback mock server を使って既定 TCP transport 経由の通信を検証しています。process runtime は起動 callback の引数・例外と終了 callback の対象パス・終了数を検証し、detach される child process の終了コードは API が公開しません。
+現在の単体テストは 298 件（29 テストスイート、2026-11-28 の最新全件検証）で、CLI の既定値・共通/バックエンド別オプション反映・`--kc-bypass-eos` と `trim_stop` の独立性・不正モードエラー、例外安全なエントリーポイント、LRU、context の継承・上書き・型変換・optional取得・親値参照、phase 境界、文字列・filesystem の text/binary 入出力、親ディレクトリ作成、prompt 優先順位、書き込み失敗、画像 Base64/MIME と未知拡張子・不存在エラー、ログseverity変換、PNG署名・chunk境界・metadata key不在、Base64不正入力と閾値境界、組み込みマクロの registry、型変換、型不一致時の callback 未呼出、generated/summary の completion/token-count executor 成功と HTTP 失敗伝播、summary の max_tokens context と reasoning 除去・上限切り詰め、JSON エスケープ、コードブロック抽出とファイル名のパストラバーサル防止、パス操作、既定引数の乱数境界、exec マクロの既定拒否・明示許可、依存注入された環境 accessor／random source／process runner／file reader／port resolver・connector・waiter／process launcher・terminator と process runner の終了コード・失敗契約、全 command mode、LLM/SD の API ターゲット解決、LLM 共通バックエンド境界の Mock 契約、HTTP transport と各 request executor の Mock 契約、LLM completion/token-count の runtime HTTP/TCP 注入成功と HTTP status 失敗伝播、SD/LLM/ComfyUI runtime writer failure 伝播、既定 TCP transport を使う LLM/SD/SB/ComfyUI overload の loopback 通信、SB writer 失敗伝播、ComfyUI 履歴 URL/JSON・queue/control/history/users/userdata query/path/header/binary/204・jobs list/detail/cancellation query/path/body・object-info/models/embeddings/extensions/features/image-mask multipart/view/metadata/system-stats/default-workflow/prompt/template list/template file/i18n/web UI API contract・WebSocket text/binary event stream forwarding・storage 注入・サブディレクトリ保持・sanitize・traversal 拒否、TCP JSON 要求のmethod・header・body・128 MiBを超える HTTP 応答 body の拒否・全 backend 注入 executor の非成功 status 例外、Stable Diffusion API の progress/interrogate/control/Extras/PNG-info/options/list/refresh/create/train/memory/script/checkpoint/OpenAPI/internal API contract・任意 JSON method/path request・HTTP method adapter・txt2img/img2img dynamic field forwarding、img2img の複数画像・mask・latent mask の Base64 要求と欠落ファイル失敗、各生成バックエンドの要求・応答解析、LLM のコードブロック・推論除去・項目リスト解析、公開parserの式 AST 評価・組み込みマクロ評価・再帰停止・条件式分岐・論理条件評価・演算子優先順位と重複token境界、マクロ変数・関数引数・ネスト・区切り記号不整合の解析、Qi 属性変換とplaceholder候補のbacktracking、予約語と識別子境界、代入・増減・statement構文の拒否、非テンプレート parse/evaluate 境界、公開モード変換、user-defined variable の区切り・重複キー、設定 stream の値反映・CLI 優先順位・不正値を検証します。実験的な式statementは `HERMIT_ENABLE_EXPERIMENTAL_EXPRESSION_STATEMENTS`、単独代入は `HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS`、複合代入は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS`、複合文は `HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS`、if/elseは `HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS`、whileは `HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS`、前置/後置増減式は `HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT`、全statement統合はStage 1–7 flagと `HERMIT_ENABLE_EXPERIMENTAL_STAGE8_STATEMENTS` を併用した時のみ有効です。Stage 8実験構成は128 tests / 25 suites、当時の既定構成は120 tests / 27 suites、2026-11-28の最新通常構成は310 tests / 29 suitesで検証しています。実験構文は既定構成には含めません。LLM、SD、SB、ComfyUI の既存 runtime overload は loopback mock server を使って既定 TCP transport 経由の通信を検証しています。process runtime は起動 callback の引数・例外と終了 callback の対象パス・終了数を検証し、detach される child process の終了コードは API が公開しません。
 
 Stage 2–7の実験flag `HERMIT_ENABLE_EXPERIMENTAL_ASSIGNMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_ASSIGNMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_COMPOUND_STATEMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_IF_STATEMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_WHILE_STATEMENTS`、`HERMIT_ENABLE_EXPERIMENTAL_INCREMENT_DECREMENT` を同時に有効にしたRelease x64検証構成では、単独・複合代入、block、if/else、while、前置/後置増減式のテストを含む124件（25 suites）が成功した。whileはplaceholder内で全loop共有の10,000 body実行予算を持ち、10,001回目が必要ならbodyの実行前に停止する。増減式は整数変数のみを更新し、prefixは更新後、postfixは更新前の値を返す。これらの構文は公開grammarには含めない。通常構成もRelease x64 Rebuild後に105件（25 suites）が成功した。
 
@@ -310,6 +310,7 @@ Hermit tokenize <encode|decode> --backend <llama-cpp|tg> [options]
 | `sd-api progress` | A1111 の `GET /sdapi/v1/progress`。`--sd-api-options` で `skip_current_image` query を指定 |
 | `sd-api routes` | A1111 FastAPI の `GET /openapi.json` から実行中 API schema を取得 |
 | `sd-api request` | 任意 A1111 route に HTTP method/path/body/header を指定。JSON object/array body は `--sd-api-options`、raw/binary body は `--sd-api-body-file`、Content-Type は `--sd-api-content-type`、追加 headers は JSON map の `--sd-api-headers`。非 text/JSON/XML 応答は bytes を stdout へ出力 |
+| `sd-api stream` | 同じ任意 HTTP request 設定を使用し、応答 body chunk を解析せず stdout へ逐次出力。SSE 等に対応し WebSocket は対象外 |
 | `sd-api pending-tasks`, `internal-progress` | A1111 `GET /internal/pending-tasks` と `POST /internal/progress`。後者の request は `--sd-api-options` |
 | `sd-api quicksettings-hint`, `ping`, `profile-startup`, `sysinfo`, `sysinfo-download` | A1111 の UI 内部 API。download は応答 bytes を stdout に出力 |
 | `sd-api interrogate` | A1111 の `POST /sdapi/v1/interrogate`。`--sd-api-options` に Base64 `image` と `clip` / `deepdanbooru` の `model` を指定 |
@@ -631,11 +632,11 @@ Ollama (`ollama`) は native `/api/generate`、`/api/chat`、`/api/embed` を使
 | `--sd-host` | — | バックエンド設定の「host」に対応する値を指定する。 |
 | `--sd-port` | — | バックエンド設定の「port」に対応する値を指定する。 |
 | `--sd-api-options` | — | `sd-api progress` の query option、`internal-progress` の body、または `sd-api` の画像・interrogate・options・create/train request fields を JSON object で指定する。汎用 `request` は JSON object/array body を指定する。create/train fields は WebUI の版・設定に応じて指定する。 |
-| `--sd-api-method` | `GET` | `sd-api request` の HTTP method。GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS を指定する。 |
-| `--sd-api-path` | `/openapi.json` | `sd-api request` の `/` 始まりの path。authority、fragment、traversal、空白および制御文字を含められない。 |
-| `--sd-api-body-file` | — | `sd-api request` の raw/binary body file。`--sd-api-options` とは併用できない。相対 path は設定 base path から解決する。 |
-| `--sd-api-content-type` | — | `sd-api request` body の Content-Type。multipart/form-data では boundary を含める。 |
-| `--sd-api-headers` | — | `sd-api request` の追加 HTTP headers を JSON string map で指定する。Host、Content-Length、Transfer-Encoding、Connection、Content-Type は指定できない。 |
+| `--sd-api-method` | `GET` | `sd-api request|stream` の HTTP method。GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS を指定する。 |
+| `--sd-api-path` | `/openapi.json` | `sd-api request|stream` の `/` 始まりの path。authority、fragment、traversal、空白および制御文字を含められない。 |
+| `--sd-api-body-file` | — | `sd-api request|stream` の raw/binary body file。`--sd-api-options` とは併用できない。相対 path は設定 base path から解決する。 |
+| `--sd-api-content-type` | — | `sd-api request|stream` body の Content-Type。multipart/form-data では boundary を含める。 |
+| `--sd-api-headers` | — | `sd-api request|stream` の追加 HTTP headers を JSON string map で指定する。Host、Content-Length、Transfer-Encoding、Connection、Content-Type は指定できない。 |
 | `--sd-generation-options` | — | `generate --backend sd` の txt2img/img2img request に追加する server-specific JSON object。既存 field を含む場合は設定値を上書きする。 |
 | `--sd-prompt-file` | — | バックエンド設定の「prompt file」に対応する値を指定する。 |
 | `--sd-negative-prompt-file` | — | バックエンド設定の「negative prompt file」に対応する値を指定する。 |

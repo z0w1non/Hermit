@@ -558,6 +558,7 @@ namespace hermit
                     << "  Hermit systemone create --backend lmstudio --llm-api-options <json> [options]\n"
                     << "  Hermit batch-chat create --backend vllm --llm-api-options <json> [options]\n"
                     << "  Hermit moderations create --backend tg --llm-api-options <json> [options]\n"
+                    << "  Hermit images generate --backend tg --llm-api-options <json> [options]\n"
                     << "  Hermit health check --backend tg [options]\n"
                     << "  Hermit generation stop --backend tg [options]\n"
                     << "  Hermit generation stream --backend kc --llm-api-options <json> [options]\n"
@@ -569,7 +570,7 @@ namespace hermit
                     << "  Hermit backend-api request --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama> --llm-api-path <path> [options]\n"
                     << "  Hermit backend-api stream --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama> --llm-api-path <path> [options]\n"
                     << "  Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata|system-stats|default-workflow|users|user-create|userdata-list|userdata-list-v2|userdata-get|userdata-put|userdata-delete|userdata-move|jobs|job|job-cancel|jobs-cancel> [options]\n"
-                    << "  Hermit sd-api <request|routes|pending-tasks|internal-progress|quicksettings-hint|ping|profile-startup|sysinfo|sysinfo-download|progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|memory|scripts|script-info|extensions|refresh-embeddings|refresh-checkpoints|refresh-vae|unload-checkpoint|reload-checkpoint|server-kill|server-restart|server-stop> [options]\n"
+                    << "  Hermit sd-api <request|stream|routes|pending-tasks|internal-progress|quicksettings-hint|ping|profile-startup|sysinfo|sysinfo-download|progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|memory|scripts|script-info|extensions|refresh-embeddings|refresh-checkpoints|refresh-vae|unload-checkpoint|reload-checkpoint|server-kill|server-restart|server-stop> [options]\n"
                     << "  Hermit models <create|copy|delete|pull|push> --backend ollama --llm-model-action-options <json> [options]\n"
                     << "  Hermit models info --backend tg [options]\n"
                     << "  Hermit models <info|model|max-length|max-context-length|soft-prompt|soft-prompts-list|version|true-max-context-length|performance|preloadstory> --backend kc [options]\n"
@@ -930,6 +931,25 @@ namespace hermit
                 cfg.llm.port = vm.at("llm-port").defaulted() ? "5000" : cfg.llm.port;
                 cfg.command_mode = CommandMode::kCreateTgModerations;
             }
+            else if (command == "images" && action_iterator != vm.end())
+            {
+                const std::string action{ action_iterator->second.as<std::string>() };
+                const auto backend_option{ vm.find("backend") };
+                if (action != "generate" || backend_option == vm.end()
+                    || backend_option->second.as<std::string>() != "tg")
+                {
+                    boost::nowide::cerr << "images generate は --backend tg が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                if (cfg.llm.api_options.empty())
+                {
+                    boost::nowide::cerr << "images generate には --llm-api-options が必要です。\n";
+                    return parse_result::program_options_error;
+                }
+                cfg.llm.backend_name = "tg";
+                cfg.llm.port = vm.at("llm-port").defaulted() ? "5000" : cfg.llm.port;
+                cfg.command_mode = CommandMode::kCreateTgImageGeneration;
+            }
             else if (command == "health" && action_iterator != vm.end())
             {
                 const std::string action{ action_iterator->second.as<std::string>() };
@@ -1140,7 +1160,7 @@ namespace hermit
                 const std::string action{ action_iterator->second.as<std::string>() };
                 if (action != "progress" && action != "routes" && action != "pending-tasks" && action != "internal-progress"
                     && action != "quicksettings-hint" && action != "ping" && action != "profile-startup" && action != "sysinfo" && action != "sysinfo-download"
-                    && action != "request" && action != "interrogate" && action != "interrupt" && action != "skip"
+                    && action != "request" && action != "stream" && action != "interrogate" && action != "interrupt" && action != "skip"
                     && action != "extra-single-image" && action != "extra-batch-images" && action != "png-info"
                     && action != "options" && action != "options-set" && action != "cmd-flags" && action != "samplers"
                     && action != "create-embedding" && action != "create-hypernetwork" && action != "train-embedding" && action != "train-hypernetwork"
@@ -1155,25 +1175,25 @@ namespace hermit
                     boost::nowide::cerr << "未対応の Stable Diffusion API 操作です: " << action << '\n';
                     return parse_result::program_options_error;
                 }
-                if (action == "request")
+                if (action == "request" || action == "stream")
                 {
                     const std::string& method{ cfg.sd.api_method };
                     if (method != "GET" && method != "POST" && method != "PUT" && method != "PATCH" && method != "DELETE" && method != "HEAD" && method != "OPTIONS")
                     {
-                        boost::nowide::cerr << "sd-api request の --sd-api-method は GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS のいずれかです。\n";
+                        boost::nowide::cerr << "sd-api request/stream の --sd-api-method は GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS のいずれかです。\n";
                         return parse_result::program_options_error;
                     }
                     if (cfg.sd.api_path.empty() || cfg.sd.api_path.front() != '/')
                     {
-                        boost::nowide::cerr << "sd-api request には '/' から始まる --sd-api-path が必要です。\n";
+                        boost::nowide::cerr << "sd-api request/stream には '/' から始まる --sd-api-path が必要です。\n";
                         return parse_result::program_options_error;
                     }
                     if (!cfg.sd.api_body_file.empty() && !cfg.sd.api_options.empty())
                     {
-                        boost::nowide::cerr << "sd-api request では --sd-api-body-file と --sd-api-options を併用できません。\n";
+                        boost::nowide::cerr << "sd-api request/stream では --sd-api-body-file と --sd-api-options を併用できません。\n";
                         return parse_result::program_options_error;
                     }
-                    cfg.command_mode = CommandMode::kRequestSdApi;
+                    cfg.command_mode = action == "stream" ? CommandMode::kStreamSdApi : CommandMode::kRequestSdApi;
                     return parse_result::success;
                 }
                 if (!cfg.sd.api_body_file.empty() || !cfg.sd.api_content_type.empty() || !cfg.sd.api_headers.empty())

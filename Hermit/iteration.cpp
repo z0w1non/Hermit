@@ -263,6 +263,7 @@ namespace hermit
             if (cfg.command_mode == CommandMode::kListModels || cfg.command_mode == CommandMode::kListRunningModels
                 || cfg.command_mode == CommandMode::kGetOllamaVersion || cfg.command_mode == CommandMode::kManageComfyuiApi
                 || cfg.command_mode == CommandMode::kManageSdApi || cfg.command_mode == CommandMode::kRequestSdApi
+                || cfg.command_mode == CommandMode::kStreamSdApi
                 || cfg.command_mode == CommandMode::kShowModel || cfg.command_mode == CommandMode::kManageOllamaModel
                 || cfg.command_mode == CommandMode::kManageLmStudioModel || cfg.command_mode == CommandMode::kCreateLmStudioChat
                 || cfg.command_mode == CommandMode::kCreateLmStudioResponse
@@ -343,6 +344,17 @@ namespace hermit
                     }
                     return 0;
                 }
+                if (cfg.command_mode == CommandMode::kStreamSdApi)
+                {
+                    const public_api::http_stream_handler writer{ [](std::string_view chunk)
+                    {
+                        boost::nowide::cout.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+                        boost::nowide::cout.flush();
+                        return true;
+                    } };
+                    sd::StreamApiRequest(cfg, stream_executor, writer);
+                    return 0;
+                }
                 if (cfg.command_mode == CommandMode::kRequestLlmApi)
                 {
                     const public_api::http_response_data response{ llm::make_api_request(cfg, executor) };
@@ -388,6 +400,7 @@ namespace hermit
                     : cfg.command_mode == CommandMode::kCreateLmStudioSystemone ? llm::create_lmstudio_systemone(cfg, executor)
                     : cfg.command_mode == CommandMode::kCreateVllmBatchChat ? llm::create_vllm_batch_chat(cfg, executor)
                     : cfg.command_mode == CommandMode::kCreateTgModerations ? llm::create_tg_moderations(cfg, executor)
+                    : cfg.command_mode == CommandMode::kCreateTgImageGeneration ? llm::create_tg_image_generation(cfg, executor)
                     : cfg.command_mode == CommandMode::kCheckTgHealth ? llm::check_tg_health(cfg, executor)
                     : cfg.command_mode == CommandMode::kGetTgModelInfo ? llm::get_tg_model_info(cfg, executor)
                     : cfg.command_mode == CommandMode::kGetKcInfo ? llm::get_kc_info(cfg, executor)

@@ -673,6 +673,17 @@ TEST(parse_command_line, configures_generic_stable_diffusion_api_request)
     EXPECT_EQ(hermit::command_line::parse(conflicting_body.argc(), conflicting_body.argv(), conflicting_cfg), hermit::command_line::parse_result::program_options_error);
 }
 
+TEST(parse_command_line, configures_generic_stable_diffusion_api_stream)
+{
+    commandline_args args{ "Hermit.exe", "sd-api", "stream", "--sd-api-method", "POST", "--sd-api-path", "/events", "--sd-api-options", R"({"stream":true})" };
+    hermit::config cfg;
+    EXPECT_EQ(hermit::command_line::parse(args.argc(), args.argv(), cfg), hermit::command_line::parse_result::success);
+    EXPECT_EQ(cfg.command_mode, hermit::CommandMode::kStreamSdApi);
+    EXPECT_EQ(cfg.sd.api_method, "POST");
+    EXPECT_EQ(cfg.sd.api_path, "/events");
+    EXPECT_EQ(cfg.sd.api_options, R"({"stream":true})");
+}
+
 TEST(parse_command_line, configures_generic_llm_backend_api_request)
 {
     commandline_args lmstudio{ "Hermit.exe", "backend-api", "request", "--backend", "lmstudio",

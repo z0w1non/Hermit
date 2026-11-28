@@ -34,6 +34,8 @@ namespace hermit
         std::string manage_api(const config&, const public_api::http_executor&);
         public_api::http_response_data make_api_request(const config&, const public_api::http_executor&);
         public_api::http_response_data make_api_request(const config&, const public_api::http_executor&, const filesystem::file_reader&);
+        public_api::http_stream_response_data StreamApiRequest(const config&, const public_api::http_stream_executor&,
+            const public_api::http_stream_handler&);
     }
     namespace sb
     {
