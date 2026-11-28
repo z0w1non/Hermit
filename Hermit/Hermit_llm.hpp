@@ -39,6 +39,7 @@ namespace Hermit
         std::string create_tg_moderations(const config&, const public_api::http_executor&);
         std::string check_tg_health(const config&, const public_api::http_executor&);
         std::string get_tg_model_info(const config&, const public_api::http_executor&);
+        std::string manage_tg_model(const config&, const public_api::http_executor&);
         std::string encode_tg_tokens(const config&, const public_api::http_executor&);
         std::string decode_tg_tokens(const config&, const public_api::http_executor&);
         public_api::http_response_data make_api_request(const config&, const public_api::http_executor&);

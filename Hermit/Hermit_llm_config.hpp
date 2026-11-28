@@ -12,7 +12,7 @@ namespace Hermit
     {
         std::string prompt, prompt_file, output_file, chat_file;
         std::string generation_prefix, generation_suffix, paragraphs_file, image_file;
-        std::string host, port, api_key, model, backend_name;
+        std::string host, port, api_key, admin_api_key, model, backend_name;
         std::string completions_target, token_count_target, chat_completions_target, models_target, embedding_target;
         std::string tokenize_target, detokenize_target, tokenize_options;
         std::string running_models_target, model_info_target, model_info_options;

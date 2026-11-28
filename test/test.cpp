@@ -230,7 +230,8 @@ TEST(parse_command_line, configures_model_list_routes_for_local_llm_backends)
         { "lmstudio", "1234", "/api/v1/models" },
         { "llama-cpp", "8080", "/v1/models" },
         { "vllm", "8000", "/v1/models" },
-        { "ollama", "11434", "/api/tags" }
+        { "ollama", "11434", "/api/tags" },
+        { "tg", "5000", "/v1/internal/model/list" }
     };
 
     for (const auto& [name, port, target] : backends)
@@ -249,6 +250,11 @@ TEST(parse_command_line, configures_model_list_routes_for_local_llm_backends)
     EXPECT_EQ(Hermit::command_line::parse(override_args.argc(), override_args.argv(), override_cfg), Hermit::command_line::parse_result::success);
     EXPECT_EQ(override_cfg.llm.port, "12000");
     EXPECT_EQ(override_cfg.llm.models_target, "/custom/tags");
+
+    commandline_args tg_args{ "Hermit.exe", "models", "list", "--backend", "tg", "--llm.admin-key", "admin-token" };
+    Hermit::config tg_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(tg_args.argc(), tg_args.argv(), tg_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(tg_cfg.llm.admin_api_key, "admin-token");
 }
 
 TEST(parse_command_line, configures_ollama_model_details_and_running_models)
@@ -443,9 +449,32 @@ TEST(parse_command_line, configures_tg_model_info)
         Hermit::command_line::parse_result::program_options_error);
 }
 
+TEST(parse_command_line, configures_tg_model_load_and_unload)
+{
+    commandline_args load_args{ "Hermit.exe", "models", "load", "--backend", "tg", "--llm.admin-key", "admin-token",
+        "--llm.model-action-options", R"({"model_name":"ExampleModel"})" };
+    Hermit::config load_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(load_args.argc(), load_args.argv(), load_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(load_cfg.command_mode, Hermit::command_mode::manage_tg_model);
+    EXPECT_EQ(load_cfg.llm.model_action, "load");
+    EXPECT_EQ(load_cfg.llm.port, "5000");
+    EXPECT_EQ(load_cfg.llm.admin_api_key, "admin-token");
+
+    commandline_args unload_args{ "Hermit.exe", "models", "unload", "--backend", "tg" };
+    Hermit::config unload_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(unload_args.argc(), unload_args.argv(), unload_cfg), Hermit::command_line::parse_result::success);
+    EXPECT_EQ(unload_cfg.command_mode, Hermit::command_mode::manage_tg_model);
+    EXPECT_EQ(unload_cfg.llm.model_action, "unload");
+
+    commandline_args missing_load_options{ "Hermit.exe", "models", "load", "--backend", "tg" };
+    Hermit::config missing_cfg;
+    EXPECT_EQ(Hermit::command_line::parse(missing_load_options.argc(), missing_load_options.argv(), missing_cfg),
+        Hermit::command_line::parse_result::program_options_error);
+}
+
 TEST(parse_command_line, rejects_model_list_for_unsupported_backends)
 {
-    commandline_args args{ "Hermit.exe", "models", "list", "--backend", "tg" };
+    commandline_args args{ "Hermit.exe", "models", "list", "--backend", "sd" };
     Hermit::config cfg;
     EXPECT_EQ(Hermit::command_line::parse(args.argc(), args.argv(), cfg), Hermit::command_line::parse_result::program_options_error);
 }

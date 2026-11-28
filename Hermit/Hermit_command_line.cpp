@@ -183,6 +183,7 @@ namespace Hermit
                 ("llm.host", po::value(&cfg.llm.host)->default_value("localhost"), "LLM host")
                 ("llm.port", po::value(&cfg.llm.port)->default_value("5000"), "LLM port")
                 ("llm.api-key", po::value(&cfg.llm.api_key)->default_value(""), "LLM API key")
+                ("llm.admin-key", po::value(&cfg.llm.admin_api_key)->default_value(""), "Text Generation Web UI admin API key")
                 ("llm.api-method", po::value(&cfg.llm.api_method)->default_value("GET"), "backend-api HTTP method")
                 ("llm.api-path", po::value(&cfg.llm.api_path)->default_value("/"), "backend-api local route path")
                 ("llm.api-options", po::value(&cfg.llm.api_options)->default_value(""), "backend-api JSON request body")
@@ -205,7 +206,7 @@ namespace Hermit
                 ("llm.model-info-target", po::value(&cfg.llm.model_info_target), "Ollama model-info API path")
                 ("llm.model-info-options", po::value(&cfg.llm.model_info_options)->default_value(""), "Ollama model-info request fields as a JSON object")
                 ("llm.model-action-target", po::value(&cfg.llm.model_action_target), "Override Ollama pull/push API path")
-                ("llm.model-action-options", po::value(&cfg.llm.model_action_options)->default_value(""), "Ollama model action request body as a JSON object")
+                ("llm.model-action-options", po::value(&cfg.llm.model_action_options)->default_value(""), "Ollama, LM Studio, or Text Generation Web UI model action request body as a JSON object")
                 ("llm.min-completion-tokens", po::value(&cfg.llm.min_completion_tokens)->default_value(256), "LLM min completion tokens")
                 ("llm.max-completion-iterations", po::value(&cfg.llm.max_completion_iterations)->default_value(5), "LLM max completion iterations")
                 ("llm.reasoning-prefix", po::value<std::string>()->default_value("")->notifier(make_unescape_string_notifier(cfg.llm.reasoning_prefix)), "LLM reasoning prefix")
@@ -543,7 +544,7 @@ namespace Hermit
                     << "使い方:\n"
                     << "  Hermit generate --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama|sd|sb|cu> [options]\n"
                     << "  Hermit server <start|stop> [options]\n"
-                    << "  Hermit models list --backend <lmstudio|llama-cpp|vllm|ollama> [options]\n"
+                    << "  Hermit models list --backend <lmstudio|llama-cpp|vllm|ollama|tg> [options]\n"
                     << "  Hermit models show --backend ollama --llm.model <model> [options]\n"
                     << "  Hermit models running --backend ollama [options]\n"
                     << "  Hermit models version --backend ollama [options]\n"
@@ -561,6 +562,7 @@ namespace Hermit
                     << "  Hermit sd-api <request|routes|pending-tasks|internal-progress|quicksettings-hint|ping|profile-startup|sysinfo|sysinfo-download|progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|memory|scripts|script-info|extensions|refresh-embeddings|refresh-checkpoints|refresh-vae|unload-checkpoint|reload-checkpoint|server-kill|server-restart|server-stop> [options]\n"
                     << "  Hermit models <create|copy|delete|pull|push> --backend ollama --llm.model-action-options <json> [options]\n"
                     << "  Hermit models info --backend tg [options]\n"
+                    << "  Hermit models <load|unload> --backend tg [--llm.model-action-options <json>] [options]\n"
                     << "  Hermit embeddings create --backend <lmstudio|llama-cpp|vllm|ollama> --llm.model <model> [options]\n"
                     << "  Hermit tokenize encode --backend <llama-cpp|tg> [options]\n"
                     << "  Hermit tokenize decode --backend <llama-cpp|tg> --llm.token-ids <id...> [options]\n"
@@ -670,6 +672,12 @@ namespace Hermit
                     cfg.llm.port = vm.at("llm.port").defaulted() ? "5000" : cfg.llm.port;
                     cfg.command_mode = command_mode::get_tg_model_info;
                 }
+                else if (action == "list" && cfg.llm.backend_name == "tg")
+                {
+                    cfg.llm.port = vm.at("llm.port").defaulted() ? "5000" : cfg.llm.port;
+                    if (cfg.llm.models_target.empty()) cfg.llm.models_target = "/v1/internal/model/list";
+                    cfg.command_mode = command_mode::list_models;
+                }
                 else if (action == "list" && cfg.llm.backend_name == "lmstudio")
                 {
                     cfg.llm.port = vm.at("llm.port").defaulted() ? "1234" : cfg.llm.port;
@@ -727,6 +735,22 @@ namespace Hermit
                     cfg.llm.port = vm.at("llm.port").defaulted() ? "11434" : cfg.llm.port;
                     cfg.llm.model_action = action;
                     cfg.command_mode = command_mode::manage_ollama_model;
+                }
+                else if (cfg.llm.backend_name == "tg" && (action == "load" || action == "unload"))
+                {
+                    if (action == "load" && cfg.llm.model_action_options.empty())
+                    {
+                        boost::nowide::cerr << "models load には --llm.model-action-options が必要です。\n";
+                        return parse_result::program_options_error;
+                    }
+                    if (action == "unload" && !cfg.llm.model_action_options.empty())
+                    {
+                        boost::nowide::cerr << "models unload では --llm.model-action-options を指定できません。\n";
+                        return parse_result::program_options_error;
+                    }
+                    cfg.llm.port = vm.at("llm.port").defaulted() ? "5000" : cfg.llm.port;
+                    cfg.llm.model_action = action;
+                    cfg.command_mode = command_mode::manage_tg_model;
                 }
                 else if (cfg.llm.backend_name == "lmstudio" && (action == "load" || action == "unload"
                     || action == "download" || action == "download-status"))

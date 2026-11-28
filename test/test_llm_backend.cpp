@@ -48,6 +48,89 @@ TEST(llm_backend_parameters, lists_models_with_get_auth_and_timeout_options)
     EXPECT_EQ(Hermit::llm::list_models(cfg, executor), R"({"models":[]})");
 }
 
+TEST(llm_backend_parameters, lists_tg_models_with_admin_auth_and_validates_response)
+{
+    Hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.models_target = "/v1/internal/model/list";
+    cfg.llm.api_key = "regular-key";
+    cfg.llm.admin_api_key = "admin-key";
+    cfg.timeout_connect = 2;
+    cfg.timeout_request = 10;
+    const Hermit::public_api::http_executor executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::get);
+        EXPECT_EQ(request.target, "/v1/internal/model/list");
+        EXPECT_EQ(request.options.authorization, "Bearer admin-key");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 2 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 10 });
+        return Hermit::public_api::http_response_data{ 200, R"({"model_names":["model-a","model-b"]})", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::list_models(cfg, executor), R"({"model_names":["model-a","model-b"]})");
+
+    cfg.llm.admin_api_key.clear();
+    cfg.llm.api_key = "regular-key";
+    const Hermit::public_api::http_executor api_key_fallback{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.options.authorization, "Bearer regular-key");
+        return Hermit::public_api::http_response_data{ 200, R"({"model_names":[1]})" };
+    } };
+    EXPECT_THROW(Hermit::llm::list_models(cfg, api_key_fallback), Hermit::command_line_exception);
+}
+
+TEST(llm_backend_parameters, loads_and_unloads_tg_models_with_admin_auth)
+{
+    Hermit::config cfg;
+    cfg.llm.backend_name = "tg";
+    cfg.llm.host = "textgen-host";
+    cfg.llm.port = "5000";
+    cfg.llm.model_action = "load";
+    cfg.llm.model_action_options = R"({"model_name":"ExampleModel","args":{"n_gpu_layers":8},"instruction_template":"ChatML"})";
+    cfg.llm.admin_api_key = "admin-key";
+    cfg.llm.api_key = "regular-key";
+    cfg.timeout_connect = 3;
+    cfg.timeout_request = 12;
+    const Hermit::public_api::http_executor load_executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/internal/model/load");
+        EXPECT_EQ(request.content_type, "application/json");
+        EXPECT_EQ(request.options.authorization, "Bearer admin-key");
+        EXPECT_EQ(request.options.connect_timeout, std::chrono::seconds{ 3 });
+        EXPECT_EQ(request.options.request_timeout, std::chrono::seconds{ 12 });
+        const nlohmann::json body{ nlohmann::json::parse(request.body) };
+        EXPECT_EQ(body.at("model_name"), "ExampleModel");
+        EXPECT_EQ(body.at("args").at("n_gpu_layers"), 8);
+        EXPECT_EQ(body.at("instruction_template"), "ChatML");
+        return Hermit::public_api::http_response_data{ 200, R"("OK")", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::manage_tg_model(cfg, load_executor), R"("OK")");
+
+    cfg.llm.model_action = "unload";
+    cfg.llm.model_action_options.clear();
+    cfg.llm.admin_api_key.clear();
+    const Hermit::public_api::http_executor unload_executor{ [](const Hermit::public_api::http_request_data& request)
+    {
+        EXPECT_EQ(request.method, Hermit::public_api::http_method::post);
+        EXPECT_EQ(request.target, "/v1/internal/model/unload");
+        EXPECT_TRUE(request.body.empty());
+        EXPECT_EQ(request.options.authorization, "Bearer regular-key");
+        return Hermit::public_api::http_response_data{ 200, R"("OK")", "application/json" };
+    } };
+    EXPECT_EQ(Hermit::llm::manage_tg_model(cfg, unload_executor), R"("OK")");
+
+    cfg.llm.model_action = "load";
+    cfg.llm.model_action_options = R"({"model_name":""})";
+    const Hermit::public_api::http_executor unused_executor{ [](const Hermit::public_api::http_request_data&)
+    {
+        ADD_FAILURE() << "invalid model load request must be rejected before transport";
+        return Hermit::public_api::http_response_data{ 200, R"("OK")" };
+    } };
+    EXPECT_THROW(Hermit::llm::manage_tg_model(cfg, unused_executor), Hermit::command_line_exception);
+}
+
 TEST(llm_backend_parameters, lists_running_ollama_models_with_get)
 {
     Hermit::config cfg;

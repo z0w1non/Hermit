@@ -65,7 +65,7 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/Hermit_runtime.hpp` | phase、反復、seed、プロセス制御、差し替え可能な port connector・process launcher・process terminator・生成物 writer・SD/SB HTTP executor と画像 reader、アプリケーション実行 API。 |
 | `Hermit/Hermit_core.hpp` | コマンド・モード変換、値文字列化、基盤処理の公開宣言。 |
 | `Hermit/Hermit_png.hpp` | PNG tEXt パラメーター抽出 API。 |
-| `Hermit/Hermit_app_types.hpp` | 段落項目とアプリケーション実行モード（model list、embeddings、tokenize、Stable Diffusion の定型・汎用 API request、ComfyUI queue/control/history/object-info/WebSocket event command を含む）。 |
+| `Hermit/Hermit_app_types.hpp` | 段落項目とアプリケーション実行モード（model list/info、embeddings、tokenize、Stable Diffusion の定型・汎用 API request、ComfyUI queue/control/history/object-info/WebSocket event command を含む）。 |
 | `Hermit/Hermit_lru.hpp` | トークン数 LRU キャッシュの型と API。 |
 | `Hermit/Hermit_lru_impl.hpp` | LRU のテンプレート実体と CBOR ファイル永続化。設定・filesystem・ログに依存する非公開実装境界。reader/writer callback で保存と復元を差し替え可能。 |
 | `Hermit/Hermit_templates.hpp` | 乱数、unwrap、値変換、variant 取得の共通テンプレート。 |
@@ -94,6 +94,8 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `docs/DEVELOPMENT_KNOWLEDGE.md` | Qi属性伝播・AST実験・依存注入テストで得た観測、採否、根拠をID付き表形式で管理する知見台帳。 |
 | `docs/REQUIREMENTS.md` | ユーザー承認済みの宣言的要求と受け入れ条件を記録する正本。 |
 | `docs/BACKEND_WEB_API_COVERAGE.md` | REQ-005 の公式バックエンド API 操作、実装・テスト対応、版・拡張差分を追跡する台帳。 |
+| `readme.md` | 日本語の利用者向け導入・実行例。冒頭リンクから README の言語を切り替える。 |
+| `docs/README/en/README.md` | 英語の利用者向け導入・実行例。 |
 | `docs/IDENTIFIERS.md` | 要求、課題、parser段階、開発知見で使う固定IDの形式と採番規則。 |
 | `build-profile/parser-template-boundary-2026-11-27.csv` / `.svg` | parser と visitor の `/Bt+` frontend/backend 比較値と図。 |
 | `Hermit/Hermit_builtin.cpp` | 組み込みマクロと動的変数の設定。 |
@@ -107,7 +109,7 @@ parser grammar と visitor のテンプレート境界は分割済みで、c1xx 
 | `Hermit/Hermit_png.cpp` | PNG署名・IHDR・chunk長を検証してtEXtメタデータを挿入・抽出。 |
 | `Hermit/Hermit_tcp.cpp` | TCP 接続確認とサーバー待機。 |
 | `Hermit/Hermit_filesystem.cpp` | ファイル読み書き、パス解決、プロンプトファイル処理。 |
-| `Hermit/Hermit_llm.cpp` | Completions/Chat Completions、Text Generation Web UI moderation/health/token encode/decode、LM Studio native chat/Responses/Decisions/Anthropic Messages/Jev System One、vLLM batch chat、モデル・embedding・token count、Ollama/LM Studio model lifecycle、会話履歴。 |
+| `Hermit/Hermit_llm.cpp` | Completions/Chat Completions、Text Generation Web UI moderation/health/current model info/admin model list/load/unload/token encode/decode、LM Studio native chat/Responses/Decisions/Anthropic Messages/Jev System One、vLLM batch chat、モデル・embedding・token count、Ollama/LM Studio model lifecycle、会話履歴。 |
 | `Hermit/Hermit_sd.cpp` | Stable Diffusion の画像生成要求、定型 API および汎用 JSON/raw HTTP API 呼び出し。 |
 | `Hermit/Hermit_sb.cpp` | Style-Bert-VITS2 の音声生成要求。 |
 | `Hermit/Hermit_cu.cpp` | ComfyUI の画像アップロード、prompt、queue/control/history、WebSocket `/ws` event stream API。 |
@@ -263,7 +265,7 @@ CLI は位置引数のサブコマンドで操作を選択し、生成・モデ�
 Hermit generate --backend <tg|kc|lmstudio|llama-cpp|vllm|ollama|sd|sb|cu> [options]
 Hermit server <start|stop> [options]
 Hermit png extract [options]
-Hermit models list --backend <lmstudio|llama-cpp|vllm|ollama> [options]
+Hermit models list --backend <lmstudio|llama-cpp|vllm|ollama|tg> [options]
 Hermit models show --backend ollama --llm.model <model> [options]
 Hermit models running --backend ollama [options]
 Hermit models version --backend ollama [options]
@@ -278,6 +280,7 @@ Hermit batch-chat create --backend vllm --llm.api-options <json> [options]
 Hermit moderations create --backend tg --llm.api-options <json> [options]
 Hermit health check --backend tg [options]
 Hermit models info --backend tg [options]
+Hermit models <load|unload> --backend tg [--llm.model-action-options <json>] [options]
 Hermit comfy <queue|queue-update|history|history-item|history-update|interrupt|free|events|object-info|models|models-folder|embeddings|extensions|features|upload-image|upload-mask|view|view-metadata|system-stats|default-workflow|prompt-status|workflow-templates|template-file|i18n|web-ui|users|user-create|userdata-list|userdata-list-v2|userdata-get|userdata-put|userdata-delete|userdata-move|jobs|job|job-cancel|jobs-cancel> [options]
 Hermit sd-api <progress|interrogate|interrupt|skip|extra-single-image|extra-batch-images|png-info|options|options-set|create-embedding|create-hypernetwork|train-embedding|train-hypernetwork|cmd-flags|samplers|schedulers|upscalers|latent-upscale-modes|sd-models|sd-vae|hypernetworks|face-restorers|realesrgan-models|prompt-styles|embeddings|refresh-embeddings|refresh-checkpoints|refresh-vae|memory|scripts|script-info|extensions|unload-checkpoint|reload-checkpoint|server-kill|server-restart|server-stop> [options]
 Hermit embeddings create --backend <lmstudio|llama-cpp|vllm|ollama> --llm.model <model> [options]
@@ -356,11 +359,13 @@ Hermit tokenize <encode|decode> --backend <llama-cpp|tg> [options]
 | `comfy job` | ComfyUI の `GET /api/jobs/{job_id}` で `--cu.prompt-id` の job を取得 |
 | `comfy job-cancel` | ComfyUI の `POST /api/jobs/{job_id}/cancel` で `--cu.prompt-id` の job を取消 |
 | `comfy jobs-cancel` | ComfyUI の `POST /api/jobs/cancel` で `--cu.api-options` の `job_ids` 配列にある job を取消 |
-| `models list --backend lmstudio|llama-cpp|vllm|ollama` | 指定した LLM server のモデル一覧 API を呼び出し、JSON を標準出力へ出力 |
+| `models list --backend lmstudio|llama-cpp|vllm|ollama|tg` | 指定した LLM server のモデル一覧 API を呼び出し、JSON を標準出力へ出力。TG は admin key を使う |
 | `models show --backend ollama` | Ollama の `/api/show` で指定モデルの詳細を取得して JSON を出力 |
 | `models running --backend ollama` | Ollama の `/api/ps` で稼働中モデル一覧を取得して JSON を出力 |
 | `models version --backend ollama` | Ollama の `/api/version` でサーバーバージョンを取得して JSON を出力 |
 | `models info --backend tg` | Text Generation Web UI `/v1/internal/model/info` から現在のモデル名と LoRA 名を取得し、JSON を出力 |
+| `models load --backend tg` | Text Generation Web UI `/v1/internal/model/load` へ `model_name` と任意の loader/template field を送り、`"OK"` を受け取る |
+| `models unload --backend tg` | Text Generation Web UI `/v1/internal/model/unload` を呼び、`"OK"` を受け取る |
 | `models create|copy|delete|pull|push --backend ollama` | Ollama の model lifecycle API を呼び、JSON/NDJSON 応答を標準出力へ出力 |
 | `models load|unload|download|download-status --backend lmstudio` | LM Studio native REST のモデル管理・download status API を呼び、JSON 応答を標準出力へ出力 |
 | `responses create --backend lmstudio` | LM Studio `POST /v1/responses` へ model/input を含む JSON を送り、通常は response object、`stream:true` では受信 SSE bytes を逐次標準出力へ出力 |
@@ -453,6 +458,7 @@ Hermit tokenize <encode|decode> --backend <llama-cpp|tg> [options]
 | `--llm.host` | — | LLM サーバーのホストを指定する。 |
 | `--llm.port` | — | LLM サーバーのポートを指定する。 |
 | `--llm.api-key` | — | Bearer 認証に使う API key を指定する。 |
+| `--llm.admin-key` | — | Text Generation Web UI の admin route 認証に使う key を指定する。TG の `models list` は未指定時に `--llm.api-key` を使う。 |
 | `--llm.api-method` | `GET` | `backend-api request` の HTTP method。GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS を指定する。 |
 | `--llm.api-path` | `/` | `backend-api request` の `/` 始まりの route path。authority、fragment、traversal、空白を含められない。 |
 | `--llm.api-options` | — | `backend-api request` や endpoint 固有コマンドの JSON body。 |
@@ -475,7 +481,7 @@ Hermit tokenize <encode|decode> --backend <llama-cpp|tg> [options]
 | `--llm.model-info-target` | — | Ollama のモデル詳細 API path を上書きする。 |
 | `--llm.model-info-options` | — | `/api/show` の追加 field を JSON object で指定する。`model` は予約 field。 |
 | `--llm.model-action-target` | — | Ollama pull/push API の path を上書きする。 |
-| `--llm.model-action-options` | — | Ollama model lifecycle または LM Studio load/unload/download の request body を JSON object で指定する。LM Studio download-status は `job_id` のみを指定する。 |
+| `--llm.model-action-options` | — | Ollama model lifecycle、LM Studio load/unload/download、TG model load の request body を JSON object で指定する。LM Studio download-status は `job_id` のみを指定する。 |
 | `--llm.min-completion-tokens` | — | 継続生成を終了する最小追加トークン数を指定する。 |
 | `--llm.max-completion-iterations` | — | Completions の最大継続回数を指定する。 |
 | `--llm.reasoning-prefix` | — | 除去対象 reasoning の開始文字列を指定する。 |
@@ -757,6 +763,7 @@ Ollama (`ollama`) は native `/api/generate`、`/api/chat`、`/api/embed` を使
 | `--llm.image-file` | 空。Chat Completions で画像を送信 |
 | `--llm.host`, `--llm.port` | `localhost`, `5000` |
 | `--llm.api-key` | 空。設定時は Bearer Authorization ヘッダーを付ける |
+| `--llm.admin-key` | 空。TG `models list` では `--llm.api-key` に fallback |
 | `--llm.completions-target` | `tg` / LM Studio / llama.cpp / vLLM: `/v1/completions`; `kc`: `/api/v1/generate`; Ollama: `/api/generate` |
 | `--llm.token-count-target` | `tg`: `/v1/internal/token-count`; `kc`: `/api/extra/tokencount`; OpenAI-compatible: `/v1/completions`; Ollama: `/api/generate` |
 | `--llm.chat-completions-target` | `tg` / `kc` / LM Studio / llama.cpp / vLLM: `/v1/chat/completions`; Ollama: `/api/chat` |
@@ -914,7 +921,7 @@ name                  = identifier ;
 | [ISS-032](ISSUES.md) | 低 | sandbox loopback test の残留 process が test.exe をロックした。 | 解決済み。PID 37232 を特定・終了して既定名 relink 成功。loopback test に時間上限と process 回収を必須化。 |
 | [ISS-028](ISSUES.md) | 低 | test.pdb の別プロセス保持時に C1041 が起きる。 | 継続管理。再発時に保持プロセスと PID を記録する。 |
 | [ISS-029](ISSUES.md) | 高 | Hermit app 差分リンクで LNK1103 が発生していた。 | 解決済み。full LTCG の差分リンク成功を維持・監視する。 |
-| [ISS-030](ISSUES.md) | 高 | 対象バックエンド全 Web API の対応が未完了。 | 進行中。LM Studio Anthropic Messages JSON/SSE、Jev System One JSON、vLLM batch chat JSON、TG moderation/health/token encode/decode を契約テスト付きで追加。2026-11-28 VS18 Release x64 solution Build 成功（警告0・エラー0）。TG/tokenize focused 5/5、全263/263 tests成功（loopback 9件を含む）。実 server 確認と未対応操作は引き続き追跡。公式操作一覧は [BACKEND_WEB_API_COVERAGE.md](BACKEND_WEB_API_COVERAGE.md) で追跡する。 |
+| [ISS-030](ISSUES.md) | 高 | 対象バックエンド全 Web API の対応が未完了。 | 進行中。LM Studio Anthropic Messages JSON/SSE、Jev System One JSON、vLLM batch chat JSON、TG moderation/health/token encode/decode/current model info/admin model list/load/unload を契約テスト付きで追加。2026-11-28 VS18 Release x64 solution Build 成功（警告0・エラー0）。TG/backend focused 14/14、全268/268 tests成功（loopback 9件を含む）。実 server 確認と未対応操作は引き続き追跡。公式操作一覧は [BACKEND_WEB_API_COVERAGE.md](BACKEND_WEB_API_COVERAGE.md) で追跡する。 |
 | [ISS-031](ISSUES.md) | 中 | CLI ヘルプとオプション資料に誤記があり、SD の seed resize 名が重複していた。 | 解決済み。共通名を維持し、img2img 専用名を分離。ヘルプ・資料と回帰テストを更新した。 |
 | [ISS-033](ISSUES.md) | 中 | CLI がフラットな `--mode` とハイフン連結オプションに依存する。 | 解決済み。サブコマンド、`--namespace.property`、dotted INI key へ置換し、旧構文を拒否する。 |
 
@@ -944,10 +951,11 @@ name                  = identifier ;
 
 ## README との役割分担
 
-README は利用者向けの導入、実行例、バックエンド接続手順を扱います。実装の全オプション、既定値、マクロ言語、ファイル構成、依存関係、既知の注意点は本仕様書を正本とします。両文書を変更する場合は、実装の現在の挙動と照合して記述を同期します。
+日本語 README はルートの `readme.md`、英語 README は `docs/README/en/README.md` に置き、各 README 冒頭のリンクで言語を切り替えます。README は利用者向けの導入、実行例、バックエンド接続手順を扱います。実装の全オプション、既定値、マクロ言語、ファイル構成、依存関係、既知の注意点は本仕様書を正本とします。両言語の README を変更する場合は、実装の現在の挙動と照合して記述を同期します。
 
 ## 参照元
 
-- 実装・CLI オプション・マクロ・バックエンド: [`Hermit/Hermit.hpp`](Hermit/Hermit.hpp)
-- 利用例・バックエンド設定例・概要: [`readme.md`](readme.md)
-- ビルド構成: [`Hermit.sln`](Hermit.sln)、`Hermit/Hermit.vcxproj`、`test/test.vcxproj`
+- 実装・CLI オプション・マクロ・バックエンド: [`Hermit/Hermit.hpp`](../Hermit/Hermit.hpp)
+- 利用例・バックエンド設定例・概要: [`readme.md`](../readme.md)
+- English guide: [`docs/README/en/README.md`](README/en/README.md)
+- ビルド構成: [`Hermit.sln`](../Hermit.sln)、`Hermit/Hermit.vcxproj`、`test/test.vcxproj`

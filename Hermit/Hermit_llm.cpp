@@ -38,13 +38,28 @@ namespace Hermit
             public_api::http_transport_options options;
             options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
             options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
-            if (!cfg.llm.api_key.empty()) options.authorization = "Bearer " + cfg.llm.api_key;
+            const std::string& auth_key{ cfg.llm.backend_name == "tg" && !cfg.llm.admin_api_key.empty()
+                ? cfg.llm.admin_api_key : cfg.llm.api_key };
+            if (!auth_key.empty()) options.authorization = "Bearer " + auth_key;
 
             public_api::http_request_data request{ public_api::make_http_request_data(
                 cfg.llm.host, cfg.llm.port, cfg.llm.models_target, {}, std::move(options)) };
             request.method = public_api::http_method::get;
             const public_api::http_response_data response{ executor(request) };
             public_api::ensure_success(response);
+            if (cfg.llm.backend_name == "tg")
+            {
+                const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+                if (!response_json.is_object() || !response_json.contains("model_names") || !response_json.at("model_names").is_array()
+                    || !std::all_of(response_json.at("model_names").begin(), response_json.at("model_names").end(), [](const nlohmann::json& name)
+                    {
+                        return name.is_string();
+                    }))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "Text Generation Web UI model list response must contain string model_names" });
+                }
+            }
             return response.body;
         }
 
@@ -703,6 +718,56 @@ namespace Hermit
             {
                 Hermit::throw_exception(command_line_exception{} << error_info::description{
                     "Text Generation Web UI model info response must contain string model_name and string lora_names" });
+            }
+            return response.body;
+        }
+
+        std::string manage_tg_model(const config& cfg, const public_api::http_executor& executor)
+        {
+            nlohmann::json body{ nlohmann::json::object() };
+            std::string_view target;
+            if (cfg.llm.model_action == "load")
+            {
+                body = nlohmann::json::parse(cfg.llm.model_action_options);
+                if (!body.is_object() || !body.contains("model_name") || !body.at("model_name").is_string()
+                    || body.at("model_name").get_ref<const std::string&>().empty()
+                    || (body.contains("args") && !body.at("args").is_null() && !body.at("args").is_object())
+                    || (body.contains("instruction_template") && !body.at("instruction_template").is_null()
+                        && !body.at("instruction_template").is_string())
+                    || (body.contains("instruction_template_str") && !body.at("instruction_template_str").is_null()
+                        && !body.at("instruction_template_str").is_string()))
+                {
+                    Hermit::throw_exception(command_line_exception{} << error_info::description{
+                        "Text Generation Web UI model load requires model_name and valid optional args/template fields" });
+                }
+                target = "/v1/internal/model/load";
+            }
+            else if (cfg.llm.model_action == "unload")
+            {
+                target = "/v1/internal/model/unload";
+            }
+            else
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI model action must be load or unload" });
+            }
+
+            public_api::http_transport_options options;
+            options.connect_timeout = std::chrono::seconds{ cfg.timeout_connect };
+            options.request_timeout = std::chrono::seconds{ cfg.timeout_request };
+            const std::string& auth_key{ cfg.llm.admin_api_key.empty() ? cfg.llm.api_key : cfg.llm.admin_api_key };
+            if (!auth_key.empty()) options.authorization = "Bearer " + auth_key;
+            public_api::http_request_data request{ public_api::make_http_request_data(
+                cfg.llm.host, cfg.llm.port, target, cfg.llm.model_action == "load" ? body.dump() : std::string{}, std::move(options)) };
+            request.method = public_api::http_method::post;
+            if (cfg.llm.model_action == "load") request.content_type = "application/json";
+            const public_api::http_response_data response{ executor(request) };
+            public_api::ensure_success(response);
+            const nlohmann::json response_json{ nlohmann::json::parse(response.body) };
+            if (!response_json.is_string() || response_json.get_ref<const std::string&>() != "OK")
+            {
+                Hermit::throw_exception(command_line_exception{} << error_info::description{
+                    "Text Generation Web UI model action response must be JSON string 'OK'" });
             }
             return response.body;
         }

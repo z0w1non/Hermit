@@ -273,6 +273,7 @@ namespace Hermit
                 || cfg.command_mode == command_mode::create_tg_moderations
                 || cfg.command_mode == command_mode::check_tg_health
                 || cfg.command_mode == command_mode::get_tg_model_info
+                || cfg.command_mode == command_mode::manage_tg_model
                 || cfg.command_mode == command_mode::request_llm_api
                 || cfg.command_mode == command_mode::create_embeddings
                 || cfg.command_mode == command_mode::tokenize || cfg.command_mode == command_mode::detokenize)
@@ -356,6 +357,7 @@ namespace Hermit
                     : cfg.command_mode == command_mode::create_tg_moderations ? llm::create_tg_moderations(cfg, executor)
                     : cfg.command_mode == command_mode::check_tg_health ? llm::check_tg_health(cfg, executor)
                     : cfg.command_mode == command_mode::get_tg_model_info ? llm::get_tg_model_info(cfg, executor)
+                    : cfg.command_mode == command_mode::manage_tg_model ? llm::manage_tg_model(cfg, executor)
                     : cfg.command_mode == command_mode::manage_comfyui_api ? cu::manage_api(cfg, executor)
                     : cfg.command_mode == command_mode::manage_sd_api ? sd::manage_api(cfg, executor)
                     : cfg.command_mode == command_mode::create_embeddings ? llm::create_embeddings(cfg, executor)

@@ -1,5 +1,7 @@
 # Hermit
 
+[日本語](readme.md) | [English](docs/README/en/README.md)
+
 Hermit は、Windows 上で動作する C++20 の CLI アプリケーションです。テキスト・画像・音声の生成バックエンドをコマンドラインから利用し、プロンプトのテンプレート展開、反復実行、生成結果の保存を行います。
 
 対象バックエンドは [text-generation-webui](https://github.com/oobabooga/text-generation-webui)、[KoboldCpp](https://github.com/LostRuins/koboldcpp)、[AUTOMATIC1111 Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)、[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)、[ComfyUI](https://github.com/Comfy-Org/ComfyUI)、[LM Studio](https://lmstudio.ai/)、[llama.cpp server](https://github.com/ggml-org/llama.cpp/tree/master/tools/server)、[vLLM](https://github.com/vllm-project/vllm)、[Ollama](https://ollama.com/) です。Hermit が各バックエンドの全 API を扱えるわけではありません。対応操作と未対応範囲は [バックエンド API 対応表](docs/BACKEND_WEB_API_COVERAGE.md) で管理しています。
@@ -129,6 +131,13 @@ Hermit.exe health check --backend tg
 Hermit.exe models info --backend tg
 ```
 
+Text Generation Web UI のモデルを admin API からロード・アンロードできます。load は `model_name` が必要です。`--llm.admin-key` を優先し、未指定なら `--llm.api-key` を送ります。
+
+```powershell
+Hermit.exe models load --backend tg --llm.model-action-options '{"model_name":"ExampleModel","args":{"n_gpu_layers":8}}' --llm.admin-key "admin-token"
+Hermit.exe models unload --backend tg --llm.admin-key "admin-token"
+```
+
 未対応の HTTP API route は `backend-api request` で呼び出せます。例えば LM Studio Responses API は次のように実行します。
 
 ```powershell
@@ -222,13 +231,14 @@ Ollama の埋め込み API は `POST /api/embed` です。複数テキストは 
 Hermit.exe embeddings create --backend ollama --llm.model "embeddinggemma" --llm.embedding-input "first text" "second text" --llm.embedding-options '{"truncate":false,"dimensions":256}'
 ```
 
-ローカル LLM server のモデル一覧は `models list` で取得できます。LM Studio はネイティブ REST [`/api/v1/models`](https://lmstudio.ai/docs/developer/rest/list)、llama.cpp と vLLM は OpenAI 互換 [`/v1/models`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)、Ollama は [`/api/tags`](https://docs.ollama.com/api/tags) を使用します。vLLM の model endpoint は [公式 vLLM server utilities](https://docs.vllm.ai/en/stable/api/vllm/benchmarks/serve/) でも使われています。応答 JSON を標準出力へそのまま出力し、host/port、Bearer API key、`--llm.models-target` で接続先を上書きできます。
+ローカル LLM server のモデル一覧は `models list` で取得できます。LM Studio はネイティブ REST [`/api/v1/models`](https://lmstudio.ai/docs/developer/rest/list)、llama.cpp と vLLM は OpenAI 互換 [`/v1/models`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)、Ollama は [`/api/tags`](https://docs.ollama.com/api/tags)、Text Generation Web UI は admin route `/v1/internal/model/list` を使用します。vLLM の model endpoint は [公式 vLLM server utilities](https://docs.vllm.ai/en/stable/api/vllm/benchmarks/serve/) でも使われています。応答 JSON を標準出力へそのまま出力し、host/port、認証 key、`--llm.models-target` で接続先を上書きできます。TG では `--llm.admin-key` が admin API key を指定します。省略すると `--llm.api-key` を使います。
 
 ```powershell
 Hermit.exe models list --backend lmstudio
 Hermit.exe models list --backend llama-cpp
 Hermit.exe models list --backend vllm --llm.api-key "token"
 Hermit.exe models list --backend ollama
+Hermit.exe models list --backend tg --llm.admin-key "admin-token"
 ```
 
 Ollama のモデル詳細、稼働状況、サーバーバージョンは `models show`、`models running`、`models version` で確認できます。
